@@ -1,0 +1,134 @@
+/* Shared slot look: the hotbar, the backpack panel and the drag ghost all use it, so a stack looks the same
+   wherever it is. DOM only, never part of the three.js scene. The containers (#hotbar, [data-panel="backpack"])
+   own the size tokens (--slot-size, --slot-gap, --slot-font-size, --slot-border*); this file consumes them.
+
+   Contrast (WCAG AA, asserted in tests/e2e/inventory.spec.ts): the block name is white @85% on a 60% black plate
+   (>= 4.5:1 over any backdrop from night to pure white, same as the L2 hotbar label); the stack count is solid
+   white on a 78% black pill (>= 11:1). Stack size is a number, never colour alone. */
+
+:is(#hotbar, [data-panel="backpack"]) .slot {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--slot-size);
+  height: var(--slot-size);
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid var(--slot-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.85);
+  font: var(--slot-font-size) / 1 system-ui, sans-serif;
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto; /* only the slots themselves take the mouse */
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Finger drags must not scroll the page while the panel is open. */
+body.backpack-open :is(#hotbar, [data-panel="backpack"]) .slot { touch-action: none; }
+
+:is(#hotbar, [data-panel="backpack"]) .slot:hover { border-color: var(--slot-border-hover); }
+
+/* Two-tone ring (dark inside, white outside) so keyboard focus is visible on daylight and night. */
+:is(#hotbar, [data-panel="backpack"]) .slot:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #000;
+}
+
+/* Drag states, declared after :hover. Dashed + faded = "this is where it came from"; white border on a lighter plate =
+   "this is where it will land". Neither relies on colour alone. (hotbar.css re-asserts the white ring for the
+   selected slot, whose amber border would otherwise win on specificity.) */
+:is(#hotbar, [data-panel="backpack"]) .slot.is-lifted {
+  opacity: 0.5;
+  border-style: dashed;
+}
+:is(#hotbar, [data-panel="backpack"]) .slot.drop-target {
+  border-color: #fff;
+  background: rgba(70, 70, 70, 0.9);
+}
+
+/* ---- slot contents ------------------------------------------------------------------------- */
+
+.slot .icon {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+}
+.slot[data-empty="true"] .icon,
+.slot[data-empty="true"] .name { display: none; }
+
+/* Block name under the icon: keeps L2's text label, and tells blocks apart without relying on colour. */
+.slot .name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Stack count, top-right. Hidden (via the hidden attribute) when the count is 1. */
+:is(.slot, .drag-ghost) .count {
+  position: absolute;
+  min-width: 14px;
+  box-sizing: border-box;
+  padding: 2px 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font: 700 11px / 1 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.slot .count { top: 2px; right: 2px; }
+
+/* Flat two-tone swatch: lighter top band over the side colour, keyed by the registry name in src/world/blocks.ts.
+   Grass/dirt/stone track the procedural atlas in src/render/textures.ts; the L4 blocks use natural colours until
+   their own textures land (the atlas currently re-uses L2 layers for them), so re-tune these then. A block with no
+   entry falls back to neutral grey and relies on its name label, so a new registry entry never breaks the UI. */
+:is(.slot, .drag-ghost) .icon {
+  box-sizing: border-box;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(to bottom, var(--icon-top, #8a8d96) 0 34%, var(--icon-side, #5f6168) 34% 100%);
+}
+:is(.slot, .drag-ghost) .icon[data-block="grass"] { --icon-top: #5fa541; --icon-side: #785537; }
+:is(.slot, .drag-ghost) .icon[data-block="dirt"]  { --icon-top: #78553a; --icon-side: #5f4229; }
+:is(.slot, .drag-ghost) .icon[data-block="stone"] { --icon-top: #808289; --icon-side: #5f6168; }
+:is(.slot, .drag-ghost) .icon[data-block="wood"]   { --icon-top: #b08a55; --icon-side: #7a5a35; }
+:is(.slot, .drag-ghost) .icon[data-block="leaves"] { --icon-top: #4f9a45; --icon-side: #2f6b2f; }
+:is(.slot, .drag-ghost) .icon[data-block="torch"]  { --icon-top: #f6c453; --icon-side: #7a5a35; }
+:is(.slot, .drag-ghost) .icon[data-block="water"]  { --icon-top: #5fb0c4; --icon-side: #38808f; }
+:is(.slot, .drag-ghost) .icon[data-block="sand"]   { --icon-top: #e3d59a; --icon-side: #c9b878; }
+:is(.slot, .drag-ghost) .icon[data-block="snow"]   { --icon-top: #f4f8fa; --icon-side: #cdd9df; }
+
+/* ---- drag ghost ---------------------------------------------------------------------------- */
+/* Follows the pointer via --x/--y (set from dragDrop.ts). pointer-events:none so elementFromPoint sees the slot beneath. */
+
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40; /* above the hotbar (20) and the panel (30) */
+  width: 36px;
+  height: 36px;
+  pointer-events: none;
+  opacity: 0.94;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+  transform: translate(calc(var(--x, 0px) - 50%), calc(var(--y, 0px) - 50%));
+}
+.drag-ghost .icon { position: absolute; inset: 0; }
+.drag-ghost .count { right: -6px; bottom: -6px; }
+
+body.inventory-dragging,
+body.inventory-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}

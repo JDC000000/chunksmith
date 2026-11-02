@@ -3,9 +3,16 @@
 // We only ever store chunks the player has EDITED. Procedural chunks regenerate
 // from the terrain seed on next load, so a fresh world keeps IDB empty until
 // the first break/place. The idb-keyval key format is namespaced with a
-// WORLD_VERSION so a future schema change (e.g. palette compression at L5)
-// gets a clean migration lane: bump the constant, add a migrator, old deltas
-// stay readable until the migrator moves them forward.
+// WORLD_VERSION so a future schema change gets a clean migration lane: bump
+// the constant, add a migrator, old deltas stay readable until the migrator
+// moves them forward.
+//
+// L4 bumps WORLD_VERSION to 2. v1 keys stored only `voxels` (4096 B). v2 keys
+// store `voxels || light` as a single 8192-byte buffer (see ADR-0014). The
+// loader reads v2 first; if a v2 key is missing the lane falls back to v1,
+// returning the voxels and treating light as all-zero so the lighting system
+// re-propagates on next step. Drop the v1 fallback at L5+ once saves have
+// been migrated.
 //
 // No three.js. Compiles for both the main thread and Workers (L3+).
 
@@ -15,16 +22,27 @@ import type { ChunkCoord, ChunkKey } from "./types";
 import { toChunkKey } from "./types";
 
 /** Bump + add a migrator when the on-disk shape changes. */
-export const WORLD_VERSION = 1;
+export const WORLD_VERSION = 2;
+
+/** The version at which chunks stored only voxels (no light nibble). */
+const V1_VERSION = 1;
+
+/** Volume of a 16^3 chunk — expected byte count for a v1 record. */
+const VOL_BYTES = 16 * 16 * 16;
 
 const KEY_PREFIX = "chunk:v";
 
-/** Idb-keyval key for a chunk delta. Shape: `chunk:v<ver>:<worldId>:<cx,cy,cz>`. */
-function chunkKey(worldId: string, c: ChunkCoord): string {
-  return `${KEY_PREFIX}${WORLD_VERSION}:${worldId}:${toChunkKey(c)}`;
+/** Idb-keyval key for a chunk delta at a specific version. */
+function chunkKeyAt(version: number, worldId: string, c: ChunkCoord): string {
+  return `${KEY_PREFIX}${version}:${worldId}:${toChunkKey(c)}`;
 }
 
-/** Prefix for scanning this world's chunk keys. */
+/** Idb-keyval key for the current WORLD_VERSION. Shape: `chunk:v<ver>:<worldId>:<cx,cy,cz>`. */
+function chunkKey(worldId: string, c: ChunkCoord): string {
+  return chunkKeyAt(WORLD_VERSION, worldId, c);
+}
+
+/** Prefix for scanning this world's chunk keys under the current version. */
 function worldPrefix(worldId: string): string {
   return `${KEY_PREFIX}${WORLD_VERSION}:${worldId}:`;
 }
@@ -36,37 +54,114 @@ function tailOf(fullKey: string, worldId: string): ChunkKey | undefined {
   return fullKey.slice(prefix.length);
 }
 
+/** Normalize whatever idb-keyval hands back (Uint8Array or ArrayBuffer) to a Uint8Array. */
+function toBytes(raw: unknown): Uint8Array | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (raw instanceof Uint8Array) return raw;
+  if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
+  return undefined;
+}
+
+/**
+ * Fetch raw bytes under a specific version key. Returns undefined if nothing
+ * is stored. Caller is responsible for interpreting the shape.
+ */
+async function fetchRaw(
+  version: number,
+  worldId: string,
+  c: ChunkCoord,
+): Promise<Uint8Array | undefined> {
+  const raw = await get(chunkKeyAt(version, worldId, c));
+  return toBytes(raw);
+}
+
 /**
  * Load a chunk's voxel bytes from IDB. Returns undefined if the chunk was never
  * edited (caller falls back to terrainFn).
+ *
+ * Layout at v2: the on-disk value is a 8192-byte buffer = voxels (4096) ||
+ * light (4096). This function returns ONLY the voxels — call
+ * `loadChunkLight` for the light array. The split keeps ChunkManager's
+ * primeChunk flow (`voxels = await loadChunk(...)`) unchanged across L3 → L4.
+ *
+ * Falls back to the v1 key if v2 is missing — in which case the result is
+ * exactly 4096 voxel bytes with no light companion. See module header for the
+ * migration contract.
  */
 export async function loadChunk(
   worldId: string,
   c: ChunkCoord,
 ): Promise<Uint8Array | undefined> {
-  const raw = (await get(chunkKey(worldId, c))) as Uint8Array | ArrayBuffer | undefined;
-  if (!raw) return undefined;
-  // idb-keyval may hand back the original Uint8Array or an ArrayBuffer depending
-  // on the underlying implementation; normalize to Uint8Array for callers.
-  if (raw instanceof Uint8Array) return raw;
-  return new Uint8Array(raw);
+  const v2 = await fetchRaw(WORLD_VERSION, worldId, c);
+  if (v2) {
+    // v2 payload is 8192 bytes (voxels || light). Legacy writes under this key
+    // may be 4096 bytes (voxels only) — accept both and slice.
+    if (v2.length >= VOL_BYTES) {
+      // Return a fresh view bounded to the voxel range so callers can safely
+      // keep it alive without pinning the trailing light bytes.
+      return new Uint8Array(v2.buffer, v2.byteOffset, VOL_BYTES);
+    }
+    return v2;
+  }
+  // v1 fallback: 4096 bytes of voxels, no light. Caller sees zero light via
+  // loadChunkLight (which returns a zero-filled buffer in this case).
+  const v1 = await fetchRaw(V1_VERSION, worldId, c);
+  if (v1 && v1.length >= VOL_BYTES) {
+    return new Uint8Array(v1.buffer, v1.byteOffset, VOL_BYTES);
+  }
+  return v1;
 }
 
 /**
- * Persist a chunk's full voxel bytes (4096 B for a 16^3 chunk). L5 can swap in
- * palette compression; the key format reserves the version slot for that.
+ * Load a chunk's packed light bytes from IDB. Returns undefined if nothing is
+ * stored for the given coord at ANY version — matches `loadChunk`'s
+ * never-saved contract so a caller can zip the two Promises.
+ *
+ * At v2, the light nibble pair is co-located with the voxels in the same key;
+ * at v1 (migration lane) light wasn't persisted, so this returns a zero-filled
+ * Uint8Array alongside a successful `loadChunk` so the lighting system can
+ * re-propagate on its next step.
+ */
+export async function loadChunkLight(
+  worldId: string,
+  c: ChunkCoord,
+): Promise<Uint8Array | undefined> {
+  const v2 = await fetchRaw(WORLD_VERSION, worldId, c);
+  if (v2) {
+    if (v2.length >= VOL_BYTES * 2) {
+      return new Uint8Array(v2.buffer, v2.byteOffset + VOL_BYTES, VOL_BYTES);
+    }
+    // v2 key but only voxels present — treat as zeroed light.
+    return new Uint8Array(VOL_BYTES);
+  }
+  const v1 = await fetchRaw(V1_VERSION, worldId, c);
+  if (v1) {
+    return new Uint8Array(VOL_BYTES);
+  }
+  return undefined;
+}
+
+/**
+ * Persist a chunk's full voxel + light bytes (8192 B for a 16^3 chunk at v2).
+ * L5 can swap in palette compression; the key format reserves the version
+ * slot for that.
  */
 export async function saveChunk(worldId: string, chunk: Chunk): Promise<void> {
   // Copy the bytes so a later in-place mutation can't retroactively edit the
   // persisted version. idb-keyval structured-clones on write anyway, but being
   // explicit about the snapshot makes the contract obvious.
-  const bytes = new Uint8Array(chunk.voxels);
-  await set(chunkKey(worldId, chunk.coord), bytes);
+  const payload = new Uint8Array(VOL_BYTES * 2);
+  payload.set(chunk.voxels, 0);
+  payload.set(chunk.light, VOL_BYTES);
+  await set(chunkKey(worldId, chunk.coord), payload);
 }
 
 /** Delete a chunk's delta. The chunk reverts to procedural next time it's streamed in. */
 export async function clearChunk(worldId: string, c: ChunkCoord): Promise<void> {
   await del(chunkKey(worldId, c));
+  // Also sweep any stale v1 record for the same coord so migration doesn't
+  // resurrect it after a clear.
+  await del(chunkKeyAt(V1_VERSION, worldId, c));
 }
 
 /** List saved chunk tails ("cx,cy,cz") for a world. Order is unspecified. */
@@ -84,6 +179,11 @@ export async function listSavedChunks(worldId: string): Promise<ChunkKey[]> {
 /**
  * Nuke every delta for a world. Returns the number of chunks removed. Danger —
  * caller should gate behind a confirm UI.
+ *
+ * Scans ONLY the current WORLD_VERSION prefix: v1 stragglers from the L3 → L4
+ * migration are left alone (loader + clearChunk still see them, so they get
+ * cleaned up individually). An explicit "sweep every version" pass can be
+ * added at L5+ if ever needed.
  */
 export async function clearWorld(worldId: string): Promise<number> {
   const all = (await keys()) as IDBValidKey[];

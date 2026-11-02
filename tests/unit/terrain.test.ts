@@ -1,5 +1,14 @@
 import { describe, test, expect } from "vitest";
 import { terrainAt, terrainAtAsync, surfaceHeightAt } from "../../src/gen/terrain";
+import {
+  BIOME,
+  SURFACE_Y_MAX,
+  SURFACE_Y_MIN,
+  TREE_RISE_MAX,
+  columnAt,
+} from "../../src/gen/biomes";
+import { BLOCKS } from "../../src/world/blocks";
+import { BIOMES } from "../../design/config";
 import { DEV_SEED, E2E_SEED, DEMO_SEED } from "../../src/debug/seeds";
 
 // Block IDs mirrored here on purpose: src/gen is decoupled from src/world, and this
@@ -25,38 +34,62 @@ function hashOf(bytes: Uint8Array): number {
   return h >>> 0;
 }
 
-/** Count of each block ID in a chunk: [air, grass, dirt, stone]. */
-function tally(bytes: Uint8Array): [number, number, number, number] {
-  const t: [number, number, number, number] = [0, 0, 0, 0];
+/** Count of each block ID in a chunk, indexed by id: [air, grass, dirt, stone, ...L4 blocks]. */
+function tally(bytes: Uint8Array): number[] {
+  const t: number[] = new Array(16).fill(0);
   for (let i = 0; i < bytes.length; i++) t[bytes[i]!]!++;
   return t;
 }
 
+/** The four L3 block types (air, grass, dirt, stone) from a tally. */
+const basics = (t: number[]): number[] => t.slice(0, 4);
+
 // ---------------------------------------------------------------------------------------
-// GOLDENS (L3 Day 2). SCHEDULED BREAK: the L2 superflat golden (4286672581) is gone on
-// purpose. L3 replaces superflat with multi-octave hills + 3D caves, which changes every
-// byte of terrain output. Nothing from L2 (saved worlds, baselines) is expected to survive.
+// GOLDENS (L3 Day 2, extended L4 Day 2). SCHEDULED BREAK #1: the L2 superflat golden
+// (4286672581) is gone on purpose. L3 replaced superflat with multi-octave hills + 3D caves.
 //
-// These values were produced by an independent, naive reference implementation (no caching,
-// no early-outs) and then matched by src/gen/terrain.ts. From here on they are frozen:
+// The L3 values below were produced by an independent, naive reference implementation (no
+// caching, no early-outs) and then matched by src/gen/terrain.ts. From here on they are frozen:
 // if one changes, terrain output changed, and every saved world and baseline screenshot is
 // invalidated. Do NOT "fix" these numbers without an ADR.
+//
+// SCHEDULED BREAK #2 (L4 Day 2, PRD-L4 risk #9): the biome layer rewrites every SURFACE chunk,
+// so the surface-chunk goldens moved (e.g. DEV chunk (0,2,0): 2421898436 -> 426455564).
+// The UNDERGROUND goldens did NOT move, and that is the point: chunk (0,0,0) (y 0..15) and
+// chunk (-3,-5,7) lie wholly below the surface, so they hold only stone and caves, and caves
+// are byte-identical to L3. That is proof the cave noise tables and draw order survived the
+// biome layer untouched. Chunk (0,0,0) therefore keeps its L3 hash 882683694.
+// The L4 goldens (GOLDEN_L4_*) are regression locks produced by this implementation, not by an
+// independent reference; they are backed by the property tests in biomes.test.ts and
+// trees.test.ts (materials, snow cap, tree cells, border smoothness).
 //
 // Seed is DEV_SEED === "chunksmith-dev-001" (src/debug/seeds.ts).
 // ---------------------------------------------------------------------------------------
 const GOLDEN_SEED = "chunksmith-dev-001";
-const GOLDEN_HASH_CHUNK_000 = 882683694;
-const GOLDEN_HASH_CHUNK_000_FIRST_256 = 3851703075; // local y=0 layer only
+const GOLDEN_HASH_CHUNK_000 = 882683694; // unchanged since L3: underground, caves only
+const GOLDEN_HASH_CHUNK_000_FIRST_256 = 3851703075; // local y=0 layer only; unchanged since L3
 const GOLDEN_CHUNKS: ReadonlyArray<{ at: [number, number, number]; hash: number }> = [
-  { at: [0, 0, 0], hash: 882683694 }, // fully below the surface here: stone + caves
-  { at: [0, 2, 0], hash: 2421898436 }, // surface chunk: air, grass, dirt, stone
-  { at: [-3, -5, 7], hash: 2113509279 }, // deep underground, negative x, positive z
+  { at: [0, 0, 0], hash: 882683694 }, // fully below the surface here: stone + caves (unchanged since L3)
+  { at: [0, 2, 0], hash: 426455564 }, // surface chunk: air, grass, dirt, stone (L4; was 2421898436)
+  { at: [-3, -5, 7], hash: 2113509279 }, // deep underground, negative x, positive z (unchanged since L3)
 ];
 
-// Heightmap bound implied by the algorithm: 32 + (24 + 12 + 6) * [-1, 1].
-// simplex output is strictly inside [-1, 1], so every surface lies in [-10, 74].
+// L4 surface goldens, DEV_SEED. One chunk per surface kind the biome layer can produce.
+const GOLDEN_L4_CHUNKS: ReadonlyArray<{ kind: string; at: [number, number, number]; hash: number }> = [
+  { kind: "forest with trees", at: [0, 3, 0], hash: 2246951090 },
+  { kind: "plains", at: [-2, 1, -2], hash: 972831147 },
+  { kind: "mountain rock, trees overhanging from the forest next door", at: [-1, 3, 1], hash: 1710380542 },
+  { kind: "mountain snow cap", at: [-1, 4, 2], hash: 2116931909 },
+];
+// FNV-1a fold of the per-chunk hashes over cx,cz in -2..2 and cy in -1..7 (225 chunks): one
+// number that moves if ANY surface, tree, snow or seam detail in the neighbourhood moves.
+const GOLDEN_L4_REGION_HASH = 1059465308;
+
+// Height bounds implied by the algorithm. L3: 32 + (24 + 12 + 6) * [-1, 1] = [-10, 74]. L4: the
+// mountain baseline rises to 32 * MOUNTAIN_HEIGHT_MULT = 76.8, so surfaces lie in [-10, 118],
+// and a tree adds up to TREE_RISE_MAX more. Re-derived here from config, not from biomes.ts.
 const H_MIN_BOUND = 32 - 42;
-const H_MAX_BOUND = 32 + 42;
+const H_MAX_BOUND = Math.floor(32 * BIOMES.MOUNTAIN_HEIGHT_MULT + 42);
 
 describe("terrainAt: determinism contract", () => {
   test("golden seed constant matches DEV_SEED", () => {
@@ -88,6 +121,30 @@ describe("terrainAt: determinism contract", () => {
 
   test.each(GOLDEN_CHUNKS)("golden hash is locked in for chunk $at", ({ at, hash }) => {
     expect(hashOf(terrainAt(GOLDEN_SEED, at[0], at[1], at[2]))).toBe(hash);
+  });
+
+  test.each(GOLDEN_L4_CHUNKS)("L4 golden hash is locked in: $kind $at", ({ at, hash }) => {
+    expect(hashOf(terrainAt(GOLDEN_SEED, at[0], at[1], at[2]))).toBe(hash);
+  });
+
+  test("L4 golden region hash (225 chunks around the origin) is locked in", () => {
+    let acc = 0x811c9dc5;
+    for (let cz = -2; cz <= 2; cz++) {
+      for (let cx = -2; cx <= 2; cx++) {
+        for (let cy = -1; cy <= 7; cy++) {
+          acc ^= hashOf(terrainAt(GOLDEN_SEED, cx, cy, cz));
+          acc = Math.imul(acc, 0x01000193);
+        }
+      }
+    }
+    expect(acc >>> 0).toBe(GOLDEN_L4_REGION_HASH);
+  });
+
+  test("block ids the generator writes match the registry (tripwire for a renumber)", () => {
+    // If voxel-engine-dev renumbers blocks.ts, every L4 golden above moves. Fail here first,
+    // with a readable message, instead of as an opaque hash diff.
+    expect([BLOCKS.air, BLOCKS.grass, BLOCKS.dirt, BLOCKS.stone]).toEqual([AIR, GRASS, DIRT, STONE]);
+    expect([BLOCKS.wood, BLOCKS.leaves, BLOCKS.snow]).toEqual([4, 5, 9]);
   });
 
   test("same seed + same coords always gives identical bytes (many chunks)", () => {
@@ -182,16 +239,18 @@ describe("terrainAt: L3 shape (rolling hills + caves)", () => {
     expect(air + stone).toBe(CHUNK_BYTES);
   });
 
-  test("chunk (0,0,0) with DEMO_SEED: the surface crosses it, all four block types present", () => {
-    // Demo world surface near the origin is y 9..32, so this chunk holds grass and dirt too.
-    const t = tally(terrainAt(DEMO_SEED, 0, 0, 0));
-    for (const n of t) expect(n).toBeGreaterThan(0);
+  test("DEMO_SEED: the chunk holding the surface at the origin has all four basic block types", () => {
+    // L3 had the DEMO surface inside chunk (0,0,0). With L4 the origin sits on the foothill
+    // ramp (h = 41 or 45), so the surface chunk is cy = 2. Pick it from the column itself.
+    const h = surfaceHeightAt(DEMO_SEED, 8, 8);
+    const t = tally(terrainAt(DEMO_SEED, 0, Math.floor(h / S), 0));
+    for (const n of basics(t)) expect(n).toBeGreaterThan(0);
   });
 
   test("chunk (0,2,0) golden seed: surface chunk has air, grass, dirt AND stone", () => {
     const t = tally(terrainAt(GOLDEN_SEED, 0, 2, 0));
-    for (const n of t) expect(n).toBeGreaterThan(0);
-    expect(t[0] + t[1] + t[2] + t[3]).toBe(CHUNK_BYTES);
+    for (const n of basics(t)) expect(n).toBeGreaterThan(0);
+    expect(t.reduce((a, b) => a + b, 0)).toBe(CHUNK_BYTES);
   });
 
   test("chunk (0,10,0): high in the sky is all air", () => {
@@ -199,15 +258,29 @@ describe("terrainAt: L3 shape (rolling hills + caves)", () => {
     expect(c.every((v) => v === AIR)).toBe(true);
   });
 
-  test("every chunk with cy >= 5 is air for any seed (height can never exceed y=74)", () => {
+  test("every chunk above the highest possible surface + tree is air, for any seed", () => {
+    // Highest surface 118 (mountain baseline 76.8 + relief 42) + tallest tree 7 = 125 -> cy 7 is
+    // the last chunk that can hold anything; cy >= 8 must be all air.
+    const firstAirCy = Math.floor((H_MAX_BOUND + TREE_RISE_MAX) / S) + 1;
+    expect(firstAirCy).toBe(8);
     for (const seed of [DEV_SEED, E2E_SEED, DEMO_SEED, "whatever", ""]) {
       for (const [cx, cz] of [[0, 0], [1, -1], [-4, 6], [9, 9]] as const) {
-        for (const cy of [5, 6, 20]) {
+        for (const cy of [firstAirCy, firstAirCy + 1, 20]) {
           const c = terrainAt(seed, cx, cy, cz);
           expect(c.every((v) => v === AIR), `${seed} (${cx},${cy},${cz})`).toBe(true);
         }
       }
     }
+  });
+
+  test("mountains really do reach the upper chunks (the bound above is not vacuous)", () => {
+    let solidAtCy6 = 0;
+    for (let cz = -20; cz <= 20; cz += 2) {
+      for (let cx = -20; cx <= 20; cx += 2) {
+        if (terrainAt(DEV_SEED, cx, 6, cz).some((v) => v !== AIR)) solidAtCy6++;
+      }
+    }
+    expect(solidAtCy6).toBeGreaterThan(0);
   });
 
   test("chunk (0,-5,0): deep underground is mostly stone, with SOME cave air carved", () => {
@@ -238,45 +311,75 @@ describe("terrainAt: L3 shape (rolling hills + caves)", () => {
     expect(fraction).toBeLessThan(0.4); // ...but terrain is not Swiss cheese
   });
 
-  test("column structure: air above, one grass, three dirt, then stone/caves (across chunk seams)", () => {
-    // Read a world column by stacking chunks cy = 5 .. -3 (covers every possible surface).
+  test("column structure: air (or tree) above, the biome's top block, three sub-layers, then stone/caves (across chunk seams)", () => {
+    // Read a world column by stacking chunks from the sky down to cy = -3 (world y = -48..).
+    const TOP_CY = Math.floor((H_MAX_BOUND + TREE_RISE_MAX) / S); // 7
+    const BOT_CY = -3;
     const columnOf = (seed: string, wx: number, wz: number): Uint8Array => {
       const cx = Math.floor(wx / S);
       const cz = Math.floor(wz / S);
       const lx = wx - cx * S;
       const lz = wz - cz * S;
-      const out = new Uint8Array(9 * S); // world y = -48 .. 95
-      for (let cy = 5; cy >= -3; cy--) {
+      const out = new Uint8Array((TOP_CY - BOT_CY + 1) * S);
+      for (let cy = TOP_CY; cy >= BOT_CY; cy--) {
         const c = terrainAt(seed, cx, cy, cz);
-        for (let ly = 0; ly < S; ly++) out[(cy + 3) * S + ly] = c[idx(lx, ly, lz)]!;
+        for (let ly = 0; ly < S; ly++) out[(cy - BOT_CY) * S + ly] = c[idx(lx, ly, lz)]!;
       }
       return out;
     };
+    const at = (col: Uint8Array, wy: number): number => col[wy - BOT_CY * S]!;
 
-    const columns: Array<[number, number]> = [
+    // Fixed columns, plus the first column of each surface kind found by scanning (so the
+    // mountain, snow and forest layouts are all covered for every seed).
+    const kindOf = (seed: string, x: number, z: number): string => {
+      const c = columnAt(seed, x, z);
+      return c.surface === BLOCKS.snow ? "snow"
+        : c.biome === BIOME.PLAINS ? "plains"
+        : c.biome === BIOME.FOREST ? "forest"
+        : "mountains";
+    };
+    const fixed: Array<[number, number]> = [
       [0, 0], [15, 15], [16, 16], [-1, -1], [-16, 5], [37, -23], [-100, 100], [3, 200],
     ];
     for (const seed of [DEV_SEED, DEMO_SEED, "whatever"]) {
+      const columns = [...fixed];
+      const want = new Set(["plains", "forest", "mountains", "snow"]);
+      for (let z = -600; z <= 600 && want.size; z += 5) {
+        for (let x = -600; x <= 600 && want.size; x += 5) {
+          if (want.delete(kindOf(seed, x, z))) columns.push([x, z]);
+        }
+      }
+      expect(want.size, `${seed}: missing kinds ${[...want]}`).toBe(0);
+
       for (const [wx, wz] of columns) {
         const col = columnOf(seed, wx, wz);
+        const c = columnAt(seed, wx, wz);
         const h = surfaceHeightAt(seed, wx, wz);
-        const where = `${seed} col (${wx},${wz}) h=${h}`;
-        const at = (wy: number): number => col[wy + 48]!;
+        expect(h).toBe(c.height);
+        const where = `${seed} col (${wx},${wz}) h=${h} ${kindOf(seed, wx, wz)}`;
 
-        for (let wy = 95; wy > h; wy--) expect(at(wy), `${where} y=${wy} should be air`).toBe(AIR);
-        expect(at(h), `${where} grass`).toBe(GRASS);
-        for (let wy = h - 1; wy >= h - 3; wy--) {
-          expect(at(wy), `${where} y=${wy} should be dirt`).toBe(DIRT);
+        for (let wy = TOP_CY * S + S - 1; wy > h; wy--) {
+          const v = at(col, wy);
+          if (c.biome === BIOME.FOREST) {
+            // A tree may stand here: logs and leaves are the only things allowed above ground.
+            expect(v === AIR || v === BLOCKS.wood || v === BLOCKS.leaves, `${where} y=${wy} got ${v}`).toBe(true);
+          } else {
+            expect(v, `${where} y=${wy} should be air`).toBe(AIR);
+          }
         }
-        for (let wy = h - 4; wy >= -48; wy--) {
-          const v = at(wy);
+        expect(at(col, h), `${where} top block`).toBe(c.surface);
+        for (let wy = h - 1; wy >= h - 3; wy--) {
+          expect(at(col, wy), `${where} y=${wy} should be ${c.subsurface}`).toBe(c.subsurface);
+        }
+        for (let wy = h - 4; wy >= BOT_CY * S; wy--) {
+          const v = at(col, wy);
           expect(v === STONE || v === AIR, `${where} y=${wy} got ${v}`).toBe(true);
         }
       }
     }
   });
 
-  test("surfaceHeightAt: integer heights inside 32 +/- 42, and rolling (not flat)", () => {
+  test("surfaceHeightAt: integer heights inside the L4 bounds, and rolling (not flat)", () => {
     const seen = new Set<number>();
     let min = Infinity;
     let max = -Infinity;
@@ -293,11 +396,12 @@ describe("terrainAt: L3 shape (rolling hills + caves)", () => {
     }
     expect(min).toBeGreaterThanOrEqual(H_MIN_BOUND);
     expect(max).toBeLessThanOrEqual(H_MAX_BOUND);
+    expect([SURFACE_Y_MIN, SURFACE_Y_MAX]).toEqual([H_MIN_BOUND, H_MAX_BOUND]); // module bounds agree with config
     expect(max - min).toBeGreaterThan(40); // real hills, not superflat
     expect(seen.size).toBeGreaterThan(30);
   });
 
-  test("golden seed heightmap over the chunk (0,*,0) footprint is locked at 32..51", () => {
+  test("golden seed heightmap over the chunk (0,*,0) footprint is locked at 41..59", () => {
     let min = Infinity;
     let max = -Infinity;
     for (let z = 0; z < S; z++) {
@@ -307,7 +411,7 @@ describe("terrainAt: L3 shape (rolling hills + caves)", () => {
         max = Math.max(max, h);
       }
     }
-    expect([min, max]).toEqual([32, 51]);
+    expect([min, max]).toEqual([41, 59]); // L3 was [32, 51]; +9 foothill lift at the origin
   });
 
   test("surfaceHeightAt is deterministic and rejects non-finite input", () => {

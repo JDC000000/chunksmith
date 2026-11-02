@@ -11,6 +11,7 @@ import {
   clearWorld,
   listSavedChunks,
   loadChunk,
+  loadChunkLight,
   saveChunk,
 } from "../../src/world/storage";
 import { Chunk } from "../../src/world/Chunk";
@@ -189,20 +190,80 @@ describe("storage: adversarial — schema versioning", () => {
     expect(key.startsWith(`chunk:v${WORLD_VERSION}:${worldId}:`)).toBe(true);
   });
 
-  test("loadChunk under a different WORLD_VERSION returns undefined (schema isolation)", async () => {
-    // Simulate the L5 upgrade path: an "old" key with WORLD_VERSION=0 was written
-    // by a prior build. The current loader (v=WORLD_VERSION) must NOT return it,
-    // otherwise a schema change would silently corrupt the world on upgrade.
+  test("loadChunk under a FUTURE WORLD_VERSION returns undefined (schema isolation)", async () => {
+    // Simulate the L5+ upgrade path: a "future" key with WORLD_VERSION+1 bytes
+    // was written by a newer build. The current loader (v=WORLD_VERSION) must
+    // NOT return it — we don't know its shape — otherwise a schema change
+    // would silently corrupt the world on downgrade.
     const futureKey = `chunk:v${WORLD_VERSION + 1}:${worldId}:0,0,0`;
-    const pastKey = `chunk:v${WORLD_VERSION - 1}:${worldId}:0,0,0`;
     const { set: idbSet } = await import("idb-keyval");
     const bytes = new Uint8Array(4096).fill(123);
     await idbSet(futureKey, bytes);
-    await idbSet(pastKey, bytes);
-    // Current loader keyed on WORLD_VERSION misses both.
+    // Current loader keyed on WORLD_VERSION misses future keys.
     expect(await loadChunk(worldId, { cx: 0, cy: 0, cz: 0 })).toBeUndefined();
-    // And listSavedChunks ignores both too.
+    // And listSavedChunks ignores them too.
     expect(await listSavedChunks(worldId)).toEqual([]);
+  });
+
+  test("loadChunk migrates a v1 key into v2 (voxels only, light defaults to zeros)", async () => {
+    // v1 → v2 migration lane. v1 keys stored just the 4096-byte voxel array;
+    // v2 keys store voxels || light (8192 bytes). A loader at v2 reads v1 when
+    // v2 is absent, returns the voxels, and surfaces zeroed light to the
+    // caller so the lighting system re-propagates on its next step().
+    // L4 only; drop the fallback at L5+ once existing saves have been upgraded.
+    const v1Key = `chunk:v1:${worldId}:0,0,0`;
+    const { set: idbSet } = await import("idb-keyval");
+    const voxelsBytes = new Uint8Array(4096).fill(42);
+    await idbSet(v1Key, voxelsBytes);
+
+    const got = await loadChunk(worldId, { cx: 0, cy: 0, cz: 0 });
+    expect(got).toBeDefined();
+    expect(got!.length).toBe(4096);
+    expect(got![0]).toBe(42);
+    expect(got![4095]).toBe(42);
+
+    // Light defaults to zeros when migrating from v1 — no light was persisted
+    // under v1 so there's nothing to recover.
+    const light = await loadChunkLight(worldId, { cx: 0, cy: 0, cz: 0 });
+    expect(light).toBeDefined();
+    expect(light!.length).toBe(4096);
+    for (let i = 0; i < light!.length; i++) expect(light![i]).toBe(0);
+  });
+
+  test("WORLD_VERSION is 2 at L4 (voxels + light packed together)", () => {
+    expect(WORLD_VERSION).toBe(2);
+  });
+});
+
+describe("storage: v2 voxels+light round-trip", () => {
+  test("saveChunk persists both voxels and light; loadChunkLight returns the stored light", async () => {
+    const chunk = filledChunk(0, 0, 0, 7);
+    chunk.voxels[0] = 1;
+    chunk.light[0] = 0xf3;    // sky=15, blk=3
+    chunk.light[100] = 0xa5;  // sky=10, blk=5
+    chunk.light[4095] = 0x0e; // sky=0, blk=14 (torch cell)
+
+    await saveChunk(worldId, chunk);
+    const voxels = await loadChunk(worldId, { cx: 0, cy: 0, cz: 0 });
+    const light = await loadChunkLight(worldId, { cx: 0, cy: 0, cz: 0 });
+
+    expect(voxels).toBeDefined();
+    expect(voxels![0]).toBe(1);
+    expect(voxels![4095]).toBe(7);
+
+    expect(light).toBeDefined();
+    expect(light!.length).toBe(4096);
+    expect(light![0]).toBe(0xf3);
+    expect(light![100]).toBe(0xa5);
+    expect(light![4095]).toBe(0x0e);
+  });
+
+  test("v2 saved key payload is exactly 8192 bytes (voxels || light)", async () => {
+    await saveChunk(worldId, filledChunk(1, 2, 3, 5));
+    const key = `chunk:v${WORLD_VERSION}:${worldId}:1,2,3`;
+    const stored = (await idbGet(key)) as Uint8Array | ArrayBuffer | undefined;
+    const bytes = stored instanceof Uint8Array ? stored : new Uint8Array(stored!);
+    expect(bytes.length).toBe(8192);
   });
 });
 

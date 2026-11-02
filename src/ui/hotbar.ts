@@ -1,23 +1,23 @@
-// Hotbar DOM overlay (US-L2-04). UI only: it owns selection via HotbarState and never touches game state.
+// Hotbar DOM overlay (US-L2-04, extended in L4 for US-L4-11). UI only: it renders the inventory's 9 hotbar
+// slots and owns selection (via HotbarState); it never touches game state.
 //
-// Integration (Day 6 orchestrator will add to main.ts):
+// Integration (main.ts):
 //   import { initHotbar } from "./ui/hotbar";
 //   initHotbar();
-// And expose getSelectedBlock on window.__game in gameAPI.ts.
+// The backpack panel (backpack.ts) is separate; the two share inventory state and the drag mechanics, so a
+// stack can be dragged between them. While the backpack is closed the hotbar behaves exactly as in L2:
+// click or Digit1..9 selects, wheel cycles, and nothing can be dragged.
 
+import "./slots.css";
 import "./hotbar.css";
-import { BLOCKS, type BlockId } from "../world/blocks";
-import { HOTBAR_SLOTS, getSelectedIndex, onSelectionChange, selectIndex } from "./HotbarState";
-
-/** Slot label comes from the registry, so renaming a block never leaves the hotbar stale. */
-function blockName(id: BlockId): string {
-  return Object.entries(BLOCKS).find(([, v]) => v === id)?.[0] ?? `block ${id}`;
-}
+import { HOTBAR_SIZE, getSlot, onInventoryChange } from "./InventoryState";
+import { getSelectedIndex, selectIndex } from "./HotbarState";
+import { initDragDrop } from "./dragDrop";
+import { createSlotButton, renderSlotButton } from "./slotView";
 
 /** Wrapping step through the slots; selectIndex() itself rejects out-of-range indices. */
 function step(delta: 1 | -1): void {
-  const n = HOTBAR_SLOTS.length;
-  selectIndex((getSelectedIndex() + delta + n) % n);
+  selectIndex((getSelectedIndex() + delta + HOTBAR_SIZE) % HOTBAR_SIZE);
 }
 
 /** Mounts the hotbar under `root` and wires input. Idempotent: a second call returns the existing element. */
@@ -30,26 +30,27 @@ export function initHotbar(root: HTMLElement = document.body): HTMLElement {
   bar.setAttribute("role", "toolbar");
   bar.setAttribute("aria-label", "Hotbar");
 
-  const slots = HOTBAR_SLOTS.map((id, i) => {
-    const slot = document.createElement("button");
-    slot.type = "button";
-    slot.className = "slot";
-    slot.dataset.index = String(i);
-    slot.textContent = blockName(id);
+  const slots = Array.from({ length: HOTBAR_SIZE }, (_, i) => {
+    const slot = createSlotButton("hotbar", i);
     slot.setAttribute("aria-keyshortcuts", String(i + 1));
     slot.addEventListener("click", () => selectIndex(i));
     bar.appendChild(slot);
     return slot;
   });
 
-  const render = (selected: number): void => {
+  const render = (): void => {
+    const selected = getSelectedIndex();
     slots.forEach((slot, i) => {
+      renderSlotButton(slot, "hotbar", i, getSlot({ lane: "hotbar", index: i }));
       slot.classList.toggle("selected", i === selected);
       slot.setAttribute("aria-pressed", String(i === selected));
     });
   };
-  onSelectionChange(render);
-  render(getSelectedIndex());
+  onInventoryChange(render); // fires for slot contents (drag/drop, pick-up, hydrate) AND for selectIndex()
+  render();
+
+  // Drag source + drop target. The delegated listeners are shared with the backpack and only act while it is open.
+  initDragDrop();
 
   window.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl/Cmd+digit is the browser's tab switcher

@@ -6,6 +6,12 @@ import {
   getBlock,
   setBlock,
   inBounds,
+  getBlockLight,
+  getSkylight,
+  setBlockLight,
+  setSkylight,
+  packLight,
+  unpackLight,
 } from "../../src/world/Chunk";
 import {
   toChunkKey,
@@ -82,6 +88,46 @@ describe("chunk data model", () => {
       const k = toChunkKey(c);
       expect(parseChunkKey(k)).toEqual(c);
     }
+  });
+
+  test("fresh chunk has a light Uint8Array of same length as voxels, all zero", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    expect(c.light).toBeInstanceOf(Uint8Array);
+    expect(c.light.length).toBe(c.voxels.length);
+    expect(c.light.length).toBe(4096);
+    for (let i = 0; i < c.light.length; i++) {
+      expect(c.light[i]).toBe(0);
+    }
+  });
+
+  test("packLight / unpackLight round-trip across the full 0..15 range", () => {
+    // Packed byte layout: (sky << 4) | blk, each nibble 0..15.
+    for (let sky = 0; sky <= 15; sky++) {
+      for (let blk = 0; blk <= 15; blk++) {
+        const packed = packLight(sky, blk);
+        expect(packed).toBeGreaterThanOrEqual(0);
+        expect(packed).toBeLessThanOrEqual(255);
+        const { sky: s, blk: b } = unpackLight(packed);
+        expect(s).toBe(sky);
+        expect(b).toBe(blk);
+      }
+    }
+  });
+
+  test("getBlockLight / setBlockLight preserve the sky nibble", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    setSkylight(c, 2, 3, 4, 15);
+    setBlockLight(c, 2, 3, 4, 11);
+    expect(getBlockLight(c, 2, 3, 4)).toBe(11);
+    expect(getSkylight(c, 2, 3, 4)).toBe(15);
+  });
+
+  test("getSkylight / setSkylight preserve the block-light nibble", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    setBlockLight(c, 7, 8, 9, 14);
+    setSkylight(c, 7, 8, 9, 5);
+    expect(getSkylight(c, 7, 8, 9)).toBe(5);
+    expect(getBlockLight(c, 7, 8, 9)).toBe(14);
   });
 
   test("worldToChunk floors into chunks and wraps negatives", () => {

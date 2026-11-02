@@ -4,9 +4,14 @@
 //
 // NO three.js here. This file must stay Worker-transferable for L3.
 // Greedy meshing lands at L3 behind a feature flag so we can diff output.
+//
+// L4: emits per-vertex `blockLight` and `skylight` u8 attributes derived from
+// the AIR cell adjacent to each face. The shader samples both and composes
+// them with `max()` (ADR-0017). Light at the solid's own cell is dark; light
+// at the adjacent air cell is what the eye sees.
 
 import { WORLD } from "../../design/config";
-import { Chunk, chunkIndex, getBlockOrAir } from "../world/Chunk";
+import { Chunk, chunkIndex, getBlockOrAir, getLightByteOrZero } from "../world/Chunk";
 import { BLOCKS, BLOCK_FACES } from "../world/blocks";
 import type { BlockId } from "../world/blocks";
 
@@ -21,6 +26,10 @@ export type MeshData = {
   blockIds: Uint8Array;
   /** One byte per vertex — the texture-array layer the fragment shader samples. */
   layer: Uint8Array;
+  /** One byte per vertex — block-light nibble (0..15) at the adjacent air cell. */
+  blockLight: Uint8Array;
+  /** One byte per vertex — skylight nibble (0..15) at the adjacent air cell. */
+  skylight: Uint8Array;
   triangleCount: number;
 };
 
@@ -92,6 +101,27 @@ function sampleWithNeighbors(
   return chunk.voxels[chunkIndex(lx, ly, lz)] as BlockId;
 }
 
+/**
+ * Returns the packed light byte at (lx,ly,lz), reaching into a neighbor chunk
+ * if needed. Out-of-world (no neighbor chunk) returns 0 so unloaded regions
+ * read as dark; the lighting cascade will fix things once the chunk streams in.
+ */
+function sampleLightWithNeighbors(
+  chunk: Chunk,
+  neighbors: ChunkNeighbors,
+  lx: number,
+  ly: number,
+  lz: number,
+): number {
+  if (lx < 0) return getLightByteOrZero(neighbors.nx, SIZE - 1, ly, lz);
+  if (lx >= SIZE) return getLightByteOrZero(neighbors.px, 0, ly, lz);
+  if (ly < 0) return getLightByteOrZero(neighbors.ny, lx, SIZE - 1, lz);
+  if (ly >= SIZE) return getLightByteOrZero(neighbors.py, lx, 0, lz);
+  if (lz < 0) return getLightByteOrZero(neighbors.nz, lx, ly, SIZE - 1);
+  if (lz >= SIZE) return getLightByteOrZero(neighbors.pz, lx, ly, 0);
+  return chunk.light[chunkIndex(lx, ly, lz)];
+}
+
 export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
   // Collect into dynamic arrays, then pack into typed arrays once we know the size.
   const positions: number[] = [];
@@ -100,6 +130,8 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
   const indices: number[] = [];
   const blockIds: number[] = [];
   const layer: number[] = [];
+  const blockLight: number[] = [];
+  const skylight: number[] = [];
 
   const ox = chunk.coord.cx * SIZE;
   const oy = chunk.coord.cy * SIZE;
@@ -124,6 +156,16 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
           const faceUVs = BLOCK_FACES[id as Exclude<BlockId, 0>];
           const layerIdx = faceUVs[FACE_KEYS[f]];
 
+          // Sample light from the AIR cell adjacent to the face. The solid's
+          // own cell is dark (voxel-flat lighting); the adjacent air cell is
+          // what the eye sees. ADR-0017.
+          const lightByte = sampleLightWithNeighbors(
+            chunk, neighbors,
+            x + face.dx, y + face.dy, z + face.dz,
+          );
+          const blkNibble = lightByte & 0x0f;
+          const skyNibble = (lightByte >> 4) & 0x0f;
+
           const base = positions.length / 3;
           // 4 vertices
           for (let i = 0; i < 4; i++) {
@@ -135,6 +177,8 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
             uvs.push(FACE_UVS[i * 2 + 0], FACE_UVS[i * 2 + 1]);
             blockIds.push(id);
             layer.push(layerIdx);
+            blockLight.push(blkNibble);
+            skylight.push(skyNibble);
           }
           // 2 triangles (0,1,2) (0,2,3)
           indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -150,6 +194,8 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
     indices: new Uint32Array(indices),
     blockIds: new Uint8Array(blockIds),
     layer: new Uint8Array(layer),
+    blockLight: new Uint8Array(blockLight),
+    skylight: new Uint8Array(skylight),
     triangleCount: indices.length / 3,
   };
 }

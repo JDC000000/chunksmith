@@ -1,0 +1,168 @@
+/* Backpack panel + its toggle button. DOM only, never part of the three.js scene. Slot look is in slots.css.
+
+   Open/close is a CSS transition on transform + opacity. The duration arrives as --backpack-anim, set by
+   backpack.ts from INVENTORY.OPEN_CLOSE_ANIM_MS in design/config.ts (140 ms); 140ms below is only a fallback.
+   The `hidden` attribute (the US-L4-09 contract) flips AFTER the exit transition, and `display` is never set on
+   the panel except via the [hidden] rule below, which would otherwise be overridden by our own `display`.
+
+   Contrast (WCAG AA, asserted in tests/e2e/inventory.spec.ts): the panel is a 94% near-black plate, so its
+   heading and hint stay >= 4.5:1 over daylight, night and pure white. */
+
+[data-panel="backpack"] {
+  --slot-size: 48px;
+  --slot-gap: 8px;
+  --slot-font-size: 10px;
+  --slot-border: #2a2a2a;
+  --slot-border-hover: #5a5a5a;
+
+  position: fixed;
+  inset: 0;
+  margin: auto; /* centres both ways without a transform, so text and borders stay pixel-aligned */
+  z-index: 30; /* above the hotbar (20) and the click-to-play card (10) */
+  box-sizing: border-box;
+  width: max-content;
+  height: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 12px 16px 16px;
+  background: rgba(14, 14, 16, 0.94);
+  border: 2px solid #2a2a2a;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  font: 14px / 1.2 system-ui, sans-serif;
+  outline: none; /* the panel only takes programmatic focus; its slots carry the visible focus ring */
+
+  /* Closed pose. Open pose is `transform: none` so the resting panel is never on a fractional pixel. */
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+  transition:
+    opacity var(--backpack-anim, 140ms) ease-out,
+    transform var(--backpack-anim, 140ms) ease-out;
+}
+
+[data-panel="backpack"][data-state="open"] {
+  opacity: 1;
+  transform: none;
+}
+
+[data-panel="backpack"][hidden] { display: none; }
+
+[data-panel="backpack"] .header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+[data-panel="backpack"] h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+[data-panel="backpack"] .hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* 3 rows x 9 columns (ADR-0015). Column count is set from backpack.ts so it stays the single source. */
+[data-panel="backpack"] .grid {
+  display: grid;
+  grid-template-columns: repeat(var(--backpack-cols, 9), var(--slot-size));
+  gap: var(--slot-gap);
+}
+
+/* Visually hidden, still announced: the polite live region for pick-up / drop messages. */
+[data-panel="backpack"] .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The click-to-play card in index.html is centred too; with the panel open it would sit behind it and a click
+   on it would re-lock the pointer mid-drag. Hidden only while open (the class is removed after the exit fade). */
+body.backpack-open #overlay { display: none; }
+
+/* ---- toggle button ------------------------------------------------------------------------- */
+/* Keyboard- and mouse-reachable way to open the panel (Tab reaches it; E still works). Sits just right of the
+   hotbar, bottom-aligned with it, so it never changes the hotbar's own box. */
+
+#backpack-toggle {
+  --slot-size: 48px;
+  --slot-gap: 8px;
+  --hotbar-slots: 9; /* set from backpack.ts */
+  --toggle-gap: 12px;
+
+  position: fixed;
+  z-index: 20;
+  left: calc(50% + (var(--hotbar-slots) * var(--slot-size) + (var(--hotbar-slots) - 1) * var(--slot-gap)) / 2 + var(--toggle-gap));
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--slot-size);
+  padding: 0 12px;
+  border: 2px solid #2a2a2a;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.85);
+  font: 12px / 1 system-ui, sans-serif;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+#backpack-toggle:hover { border-color: #5a5a5a; }
+#backpack-toggle[aria-expanded="true"] { border-color: #8a8a8a; }
+#backpack-toggle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #000;
+}
+#backpack-toggle kbd {
+  font: inherit;
+  font-weight: 700;
+  padding: 2px 5px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+/* Narrow viewports: not enough room beside the hotbar, so sit centred just above it. */
+@media (max-width: 720px) {
+  #backpack-toggle {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(8px + var(--slot-size) + 8px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* L5-ready: finger-sized targets, matching the hotbar's coarse-pointer tokens. */
+@media (pointer: coarse) {
+  [data-panel="backpack"],
+  #backpack-toggle {
+    --slot-size: 64px;
+    --slot-gap: 12px;
+    --slot-font-size: 12px;
+  }
+  #backpack-toggle {
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    font-size: 14px;
+  }
+}
+@media (pointer: coarse) and (max-width: 900px) {
+  #backpack-toggle {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(16px + var(--slot-size) + 8px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-panel="backpack"] { transition: none; }
+}
