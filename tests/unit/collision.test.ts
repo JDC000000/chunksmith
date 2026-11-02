@@ -234,14 +234,15 @@ describe("sweepPlayer", () => {
   });
 
   test("Y sweep is last: a +X push stopped by a wall still falls under gravity on Y", () => {
-    // Wall at (3,0,0) (and the floor cells for z=0) and floor at (0..3, -1, 0).
+    // Wall at (3,0,0) is at the player's current y, so +X motion hits it.
+    // Floor at (_, -1, _) lets the Y clip rest feet at y=0 after falling.
     const w = makeWorld([
       [3, 0, 0],
       [-1, -1, 0], [0, -1, 0], [1, -1, 0], [2, -1, 0], [3, -1, 0],
     ]);
     const r = sweepPlayer({
       world: w,
-      position: { x: 0.5, y: 2, z: 0.5 },
+      position: { x: 0.5, y: 0.1, z: 0.5 },
       velocity: { x: 20, y: -20, z: 0 },  // slam into wall and fall
       halfWidth: 0.5,
       height: 1.8,
