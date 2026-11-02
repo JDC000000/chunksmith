@@ -1,0 +1,18 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.playwright-cache/
+.vite/
+.DS_Store
+*.log
+# Local personal/secret files
+.env
+.env.local
+.env.*.local
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/
+# OS/editor
+.idea/
+.vscode/
