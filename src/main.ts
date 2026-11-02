@@ -14,7 +14,7 @@ import { DEV_SEED } from "./debug/seeds";
 import { PLAYER, CAMERA, WORLD } from "../design/config";
 import { World } from "./world/World";
 import type { Chunk } from "./world/Chunk";
-import { terrainAt } from "./gen/terrain";
+import { terrainAt, surfaceHeightAt } from "./gen/terrain";
 import { meshChunk } from "./mesh/naiveMesher";
 import type { ChunkNeighbors } from "./mesh/naiveMesher";
 import { createChunkMaterial } from "./render/chunkMaterial";
@@ -51,11 +51,13 @@ const camera = new THREE.PerspectiveCamera(
   CAMERA.NEAR,
   CAMERA.FAR
 );
-// Spawn above-and-behind the origin chunk, close enough that REACH_BLOCKS (6) can
-// touch the grass surface. 20 blocks up left the player outside reach (silent no-op
-// on click) during the first external playtest; (8, 4, 24) keeps the grass in frame
-// and inside the raycast budget.
-camera.position.set(8, 4, 24);
+// L3 spawn: raycast the heightmap for the spawn column + lift 5 blocks for a
+// clear view. SPAWN_FLYING=true (design/config) means player can fly down to the
+// surface at their own pace — no fall required. Reach of 6 blocks is enough to
+// touch terrain within a short descent.
+const spawnX = 8, spawnZ = 24;
+const spawnSurfaceY = surfaceHeightAt(DEV_SEED, spawnX, spawnZ);
+camera.position.set(spawnX, spawnSurfaceY + 5, spawnZ);
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -213,7 +215,9 @@ renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
 window.addEventListener("contextmenu", (e) => { if (controls.isLocked) e.preventDefault(); });
 
 // Camera look-at: start angled toward the origin chunk so the player sees something.
-camera.lookAt(8, 1, 8);
+// Look at the terrain surface ahead of the player, not an arbitrary (8,1,8) that
+// may now be inside a hill at the new world shape.
+camera.lookAt(spawnX, surfaceHeightAt(DEV_SEED, spawnX, spawnZ - 8), spawnZ - 8);
 
 // === Input ===
 const keys: Record<string, boolean> = {};
