@@ -2,7 +2,7 @@
 **Owner:** Jon Cartwright
 **Date:** 2026-11-02
 **Version:** 0.1 (draft skeleton — widget decisions pending)
-**Status:** Draft; blocked on widget decisions in §2.1
+**Status:** Draft; widget decisions LOCKED 2026-11-02 (see §2.1 — ADRs 0013-0017 accepted)
 **Companion:** `PRD.md` (L1+L2), `PRD-L3.md` (L3), `TSD-L4.md` (to be drafted after widget), `docs/levels/level-4.md`
 
 ## 1. Vision
@@ -15,11 +15,11 @@ Different places look different. Caves feel like caves. Playing with blocks feel
 ### 2.1 Pending widget decisions (lock on Day L4-1)
 | Area | Options | Candidate ADR |
 |---|---|---|
-| Biome blending | (a) Voronoi cells with hard borders · (b) noise-mixed weights across biomes · (c) explicit transition bands tagged by heightmap gradient | **ADR-0013** — Widget decision pending |
-| Block-light propagation | (a) full BFS flood each frame · (b) incremental dirty-queue updates on edit · (c) greedy approximation (fixed radius, no occlusion) | **ADR-0014** — Widget decision pending |
-| Inventory serialization | (a) merge into existing IDB chunk-delta record · (b) separate `playerState` IDB record keyed by seed | **ADR-0015** — Widget decision pending |
-| Water block scope | (a) cosmetic voxel in L4 (no flow, no physics) · (b) defer entirely to L5 | **ADR-0016** — Widget decision pending |
-| Torch rendering | (a) emissive shader channel driven by `uBlockLight` · (b) separate `THREE.PointLight` per torch (count-capped) | **ADR-0017** — Widget decision pending |
+| Biome blending | (a) Voronoi cells with hard borders · (b) noise-mixed weights across biomes · (c) explicit transition bands tagged by heightmap gradient | **ADR-0013 LOCKED → (b) noise-mixed weights** |
+| Block-light propagation | (a) full BFS flood each frame · (b) incremental dirty-queue updates on edit · (c) greedy approximation (fixed radius, no occlusion) | **ADR-0014 LOCKED → (b) incremental dirty-queue** |
+| Inventory serialization | (a) merge into existing IDB chunk-delta record · (b) separate `playerState` IDB record keyed by seed | **ADR-0015 LOCKED → (b) separate `playerState` record** |
+| Water block scope | (a) cosmetic voxel in L4 (no flow, no physics) · (b) defer entirely to L5 | **ADR-0016 LOCKED → (a) cosmetic voxel at L4** |
+| Torch rendering | (a) emissive shader channel driven by `uBlockLight` · (b) separate `THREE.PointLight` per torch (count-capped) | **ADR-0017 LOCKED → (a) emissive shader channel** |
 
 Until these lock, every downstream day in `level-4.md` is a draft estimate.
 

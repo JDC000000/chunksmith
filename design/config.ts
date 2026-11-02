@@ -78,3 +78,72 @@ export const PHYSICS = {
   /** New players spawn with flight on per widget — avoids first-touch fall. */
   SPAWN_FLYING: true,
 };
+
+// =============================================================================
+// === L4 widget-locked constants (ADRs 0013-0017, 2026-11-02) ===
+// Per game-designer handback — Jon directive "creative, contemporary, a bit fun".
+// See docs/decisions/ADR-00{13..17}-*.md for rationale. Namespaces are additive
+// and must not be referenced by L1-L3 code paths until the L4 feature flag is on.
+// =============================================================================
+
+export const BIOMES = {
+  /** Mix noise frequency. Lower = larger biome patches. 1/256 ≈ ~16-chunk islands — walkable in a session. */
+  WEIGHT_NOISE_SCALE: 1 / 256,
+  /** Width of the blend band in blocks. 12 = ~3/4-chunk fade; wide enough to feel soft, narrow enough to feel like a place. */
+  TRANSITION_SOFTNESS_BLOCKS: 12,
+  /** Trees per 16x16 forest chunk. 4 reads lush without hiding the sky. Tuned Day L4-2. */
+  FOREST_TREES_PER_CHUNK: 4,
+  /** Mountain surface-height multiplier over plains baseline. 2.4 clears US-L4-04's +20 m with headroom. */
+  MOUNTAIN_HEIGHT_MULT: 2.4,
+  /** Plains micro-roughness. 0.35 gives rolling hills without feeling ironed. */
+  PLAINS_ROUGHNESS: 0.35,
+  /** Snow cap begins at this y. Above the usual tree line; makes peaks pop in screencaps. */
+  SNOW_CAP_Y: 72,
+} as const;
+
+export const LIGHTING = {
+  /** Torches emit this level. 14 is genre-standard reach of ~14 blocks before full dark. */
+  TORCH_LIGHT_LEVEL: 14,
+  /** Direct sky = max. 15 so sky always wins a tie with a torch beneath open air. */
+  SUNLIGHT_LEVEL_MAX: 15,
+  /** Attenuation per block traversed in BFS. 1 = classic voxel falloff. */
+  FALLOFF_PER_BLOCK: 1,
+  /** Max cells popped from dirty queue per frame. 2000 keeps a cascade under 4 ms on mid hardware. */
+  DIRTY_QUEUE_BUDGET_PER_FRAME: 2000,
+  /** Floor on perceived torch brightness in shader (PRD §2.5 photosensitivity clamp). */
+  TORCH_BRIGHTNESS_MIN: 0.4,
+  /** Flicker peak-to-peak amplitude in brightness units. 0.06 reads alive, not seizure-inducing. */
+  TORCH_FLICKER_AMPLITUDE: 0.06,
+  /** Flicker base frequency in Hz. 5.5 + perlin feels like a real flame, not a strobe. Clamp ≤ 0.1 before shipping. */
+  TORCH_FLICKER_HZ: 5.5,
+} as const;
+
+export const INVENTORY = {
+  /** Backpack slots. 27 = genre-standard 3x9 grid. */
+  BACKPACK_SLOTS: 27,
+  /** Hotbar slots. Stays at 9 (L2) per PRD §8. */
+  HOTBAR_SLOTS: 9,
+  /** Max per-slot count. 64 is the voxel-sandbox convention and the number players reflexively expect. */
+  MAX_STACK_SIZE: 64,
+  /** Open/close panel animation. 140 ms = modern-snappy (iOS-ish), not sluggish. */
+  OPEN_CLOSE_ANIM_MS: 140,
+  /** Right-click split delay in ms. 0 = instant; feels responsive on drag-split. */
+  SPLIT_HOLD_MS: 0,
+  /** Separate IDB record key suffix for player state. Composes with PERSISTENCE.WORLD_ID (e.g. "world-0:player"). */
+  PLAYER_STATE_KEY_SUFFIX: ":player",
+  /** Schema version for player state. Bump on breaking shape change. */
+  PLAYER_STATE_VERSION: 1,
+} as const;
+
+export const WATER = {
+  /** Opacity. 0.55 reads watery without hiding what's under. Risk-#5 ceiling: ≤ 0.6. */
+  OPACITY: 0.55,
+  /** Tint. Slightly green-blue — lake, not pool. */
+  TINT_RGB: [0.22, 0.55, 0.62] as const,
+  /** Default sea level y. Plains biome fills depressions below this. */
+  SEA_LEVEL_Y: 32,
+  /** Shader wave amplitude in blocks. 0.03 = barely-there surface shimmer; sells "liquid" cheap. */
+  WAVE_AMPLITUDE_BLOCKS: 0.03,
+  /** Wave frequency Hz. 0.4 = slow lake-ripple, not storm. */
+  WAVE_HZ: 0.4,
+} as const;
