@@ -7,7 +7,7 @@
 
 import { WORLD } from "../../design/config";
 import { Chunk, chunkIndex, getBlockOrAir } from "../world/Chunk";
-import { BLOCKS } from "../world/blocks";
+import { BLOCKS, BLOCK_FACES } from "../world/blocks";
 import type { BlockId } from "../world/blocks";
 
 const SIZE = WORLD.CHUNK_SIZE;
@@ -17,8 +17,10 @@ export type MeshData = {
   normals: Float32Array;
   uvs: Float32Array;
   indices: Uint32Array;
-  /** One byte per vertex — the shader samples the texture-array layer from it in L6. */
+  /** One byte per vertex — kept for backward-compat / tooling. */
   blockIds: Uint8Array;
+  /** One byte per vertex — the texture-array layer the fragment shader samples. */
+  layer: Uint8Array;
   triangleCount: number;
 };
 
@@ -62,6 +64,17 @@ const FACES: Face[] = [
 const FACE_UVS: [number, number, number, number, number, number, number, number] =
   [0, 0,  1, 0,  1, 1,  0, 1];
 
+/** Picks the BLOCK_FACES field matching FACES[faceIdx]. */
+type FaceKey = "top" | "bottom" | "east" | "west" | "south" | "north";
+const FACE_KEYS: readonly FaceKey[] = [
+  "top",    // 0: +y
+  "bottom", // 1: -y
+  "east",   // 2: +x
+  "west",   // 3: -x
+  "south",  // 4: +z
+  "north",  // 5: -z
+];
+
 /** Returns the block id at (lx,ly,lz), reaching into a neighbor chunk if needed. */
 function sampleWithNeighbors(
   chunk: Chunk,
@@ -86,6 +99,7 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
   const uvs: number[] = [];
   const indices: number[] = [];
   const blockIds: number[] = [];
+  const layer: number[] = [];
 
   const ox = chunk.coord.cx * SIZE;
   const oy = chunk.coord.cy * SIZE;
@@ -105,6 +119,11 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
           );
           if (nid !== BLOCKS.air) continue;
 
+          // Look up the per-face texture-array layer. BLOCK_FACES is keyed by
+          // non-air block ids; air was already filtered above.
+          const faceUVs = BLOCK_FACES[id as Exclude<BlockId, 0>];
+          const layerIdx = faceUVs[FACE_KEYS[f]];
+
           const base = positions.length / 3;
           // 4 vertices
           for (let i = 0; i < 4; i++) {
@@ -115,6 +134,7 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
             normals.push(face.n[0], face.n[1], face.n[2]);
             uvs.push(FACE_UVS[i * 2 + 0], FACE_UVS[i * 2 + 1]);
             blockIds.push(id);
+            layer.push(layerIdx);
           }
           // 2 triangles (0,1,2) (0,2,3)
           indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -129,6 +149,7 @@ export function meshChunk(chunk: Chunk, neighbors: ChunkNeighbors): MeshData {
     uvs: new Float32Array(uvs),
     indices: new Uint32Array(indices),
     blockIds: new Uint8Array(blockIds),
+    layer: new Uint8Array(layer),
     triangleCount: indices.length / 3,
   };
 }

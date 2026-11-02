@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { WORLD } from "../../design/config";
 import { Chunk, setBlock as chunkSetBlock } from "../../src/world/Chunk";
 import { meshChunk } from "../../src/mesh/naiveMesher";
-import { BLOCKS } from "../../src/world/blocks";
+import { BLOCKS, BLOCK_FACES } from "../../src/world/blocks";
 
 const SIZE = WORLD.CHUNK_SIZE;
 
@@ -16,6 +16,7 @@ describe("naive culled mesher", () => {
     expect(m.normals.length).toBe(0);
     expect(m.uvs.length).toBe(0);
     expect(m.blockIds.length).toBe(0);
+    expect(m.layer.length).toBe(0);
   });
 
   test("single solid block at local (0,0,0) with no neighbors emits 6 faces / 12 triangles", () => {
@@ -77,6 +78,47 @@ describe("naive culled mesher", () => {
     const m = meshChunk(c, {});
     // Each cube would produce 6; shared face hidden on both sides -> 6+6-2 = 10 faces.
     expect(m.triangleCount).toBe(10 * 2);
+  });
+
+  test("exposes a per-vertex `layer` attribute whose length matches vertex count", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    chunkSetBlock(c, 0, 0, 0, BLOCKS.grass);
+    const m = meshChunk(c, {});
+    const vertexCount = m.positions.length / 3;
+    expect(m.layer).toBeInstanceOf(Uint8Array);
+    expect(m.layer.length).toBe(vertexCount);
+  });
+
+  test("grass block's layer bytes follow BLOCK_FACES: top=0, sides=1, bottom=2", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    chunkSetBlock(c, 0, 0, 0, BLOCKS.grass);
+    const m = meshChunk(c, {});
+    // Face emission order in the mesher is: top, bottom, +x, -x, +z, -z.
+    // Each face writes 4 vertices with the same layer byte.
+    const faceLayers: number[] = [];
+    for (let f = 0; f < 6; f++) {
+      faceLayers.push(m.layer[f * 4]);
+      // All four verts in a face share the layer index.
+      for (let i = 0; i < 4; i++) {
+        expect(m.layer[f * 4 + i]).toBe(faceLayers[f]);
+      }
+    }
+    const g = BLOCK_FACES[BLOCKS.grass];
+    expect(faceLayers[0]).toBe(g.top);    // 0
+    expect(faceLayers[1]).toBe(g.bottom); // 2
+    expect(faceLayers[2]).toBe(g.east);   // 1
+    expect(faceLayers[3]).toBe(g.west);   // 1
+    expect(faceLayers[4]).toBe(g.south);  // 1
+    expect(faceLayers[5]).toBe(g.north);  // 1
+  });
+
+  test("stone block's layer bytes are 3 on every face (uniform block)", () => {
+    const c = new Chunk({ cx: 0, cy: 0, cz: 0 });
+    chunkSetBlock(c, 0, 0, 0, BLOCKS.stone);
+    const m = meshChunk(c, {});
+    for (let i = 0; i < m.layer.length; i++) {
+      expect(m.layer[i]).toBe(BLOCK_FACES[BLOCKS.stone].top);
+    }
   });
 
   test("boundary face is culled when a neighbor chunk provides a solid voxel across it", () => {

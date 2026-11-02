@@ -18,6 +18,7 @@ import { terrainAt } from "./gen/terrain";
 import { meshChunk } from "./mesh/naiveMesher";
 import type { ChunkNeighbors } from "./mesh/naiveMesher";
 import { createChunkMaterial } from "./render/chunkMaterial";
+import { createBlockTextureArray } from "./render/textures";
 import { buildChunkMesh } from "./render/chunkRenderer";
 import { ChunkManager } from "./world/ChunkManager";
 import type { ChunkStreamUpdate } from "./world/ChunkManager";
@@ -55,7 +56,8 @@ scene.add(sun);
 
 // === Voxel world + chunk streaming ===
 const world = new World(DEV_SEED);
-const material = createChunkMaterial();
+const atlas = createBlockTextureArray();
+const material = createChunkMaterial(atlas);
 
 // Radius override via ?radius=H or ?radius=H,V — defaults to config values.
 // Default config (8H, 4V) → 17*17*9 = 2601 chunks; too heavy for headless SwiftShader.

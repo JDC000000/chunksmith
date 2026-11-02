@@ -9,8 +9,10 @@ export function buildChunkMesh(data: MeshData, material: THREE.Material): THREE.
   geom.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
   geom.setAttribute("normal", new THREE.BufferAttribute(data.normals, 3));
   geom.setAttribute("uv", new THREE.BufferAttribute(data.uvs, 2));
-  // Per-vertex blockId stays on the geometry so the L6 shader can read it.
+  // Per-vertex blockId stays on the geometry for tooling / debug readers.
   geom.setAttribute("blockId", new THREE.BufferAttribute(data.blockIds, 1));
+  // Per-vertex texture-array layer — the chunk shader samples the atlas by it.
+  geom.setAttribute("layer", new THREE.BufferAttribute(data.layer, 1));
   geom.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geom.computeBoundingSphere();
   return new THREE.Mesh(geom, material);
