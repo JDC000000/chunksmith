@@ -13,6 +13,23 @@
 - [ ] Alt-tab out & back recovers cleanly
 - [ ] Feels like a game, not a tech demo
 
+### Automated checks (as of 2026-11-02, Day 3)
+Run with `npm run e2e`. Passing here does NOT replace the manual items above; it only means they are less likely to be broken.
+
+| Story | Spec | What it proves | What it does NOT prove (still manual) |
+|---|---|---|---|
+| US-L1-01 | `tests/e2e/smoke.spec.ts` (existing) | Page boots, canvas present, no console errors, `window.__game` exposes scene/camera/renderer/world | Load time <2s on a real connection; no white flash |
+| US-L1-02 | `tests/e2e/smoke.spec.ts` (existing) | Overlay is present, click does not error | Pointer actually locks and overlay hides (headless lock is unreliable; the spec only asserts the DOM state is valid). Esc returns overlay |
+| US-L1-03 | `tests/e2e/controls.spec.ts` (new, Day 3) | `moveForward(5)` = -5 z, `moveRight(5)` = +5 x, KeyW with controls unlocked does not move the camera (render loop confirmed running) | Real W/A/S/D keys through the locked tick loop; "smoothly"; mouse look |
+| US-L1-04 | `tests/e2e/perf.spec.ts` (new, Day 3) | Median FPS over a 5 s sample while the camera moves, after a 2 s warm-up, meets `FPS_FLOOR` (currently 40, headless software GL) | The PRD's 60 FPS target on a real GPU over a 10 s walk; Alt-tab recovery |
+
+Not automatable, still required: **Jon's 15-min live playtest** (all items above, plus Feel questions and Crash probes).
+
+Notes for whoever runs e2e:
+- Run it alone. A second `playwright test` against this repo wipes `test-results/` mid-run (shows up as `ENOENT ... .playwright-artifacts-0`) and, on this 2-core box, starves the renderer so FPS drops.
+- Editing `src/` while e2e runs makes Vite reload the page. `perf.spec.ts` and the unlocked-KeyW test detect this and fail with "page reloaded" rather than reporting a bogus result.
+- `perf.spec.ts` turns Playwright tracing off for itself; trace screenshots of the software-GL canvas visibly cut FPS (one traced run: median 41; untraced runs: 53-60).
+
 ## L2 (end of Day 7)
 - [ ] All L1 still passes (no regression)
 - [ ] Walk 100 blocks → new chunks appear ahead

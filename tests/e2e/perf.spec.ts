@@ -4,9 +4,12 @@ import { test, expect } from "@playwright/test";
  * US-L1-04: 60 FPS while moving.
  *
  * PRD target is 60 FPS on real-GPU hardware. Headless Chromium in the cloud
- * container renders via SwiftShader (software GL) and slows under load as
- * other tests warm the browser. Floor is set to 40 here to keep CI non-flaky;
- * the real 60 FPS gate is Jon's manual playtest on his Mac.
+ * container renders via SwiftShader (software GL). Two realities:
+ *  - CI (quiet, 1 worker): clean 55-60 FPS → floor 55 catches real regressions.
+ *  - In-session dev (concurrent subagents + CPU load): 40-50 FPS → floor 40
+ *    avoids flakes without losing all signal.
+ * Config via FPS_FLOOR_HEADLESS env var (CI workflow sets it to 55).
+ * Real 60 FPS gate is Jon's manual playtest on his Mac.
  *
  * Notes on the measurement:
  *  - `getFps()` is a 1 s rolling window refreshed once per second and reads 0
@@ -16,7 +19,7 @@ import { test, expect } from "@playwright/test";
  *    sample, then take the median over the 5 s window.
  */
 
-const FPS_FLOOR = 40;
+const FPS_FLOOR = Number(process.env.FPS_FLOOR_HEADLESS ?? 40);
 const SAMPLE_INTERVAL_MS = 200;
 const SAMPLE_WINDOW_MS = 5000;
 const WALK_MS = 2000;
@@ -32,7 +35,7 @@ const median = (xs: number[]): number => {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 };
 
-test("US-L1-04 median FPS while moving is >= 55 (headless floor)", async ({ page }) => {
+test("US-L1-04 median FPS while moving meets the headless floor", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
   await page.waitForFunction(() => (window as any).__game !== undefined, undefined, { timeout: 5000 });
 

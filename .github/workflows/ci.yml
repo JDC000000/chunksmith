@@ -32,6 +32,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests (Playwright)
+        env:
+          FPS_FLOOR_HEADLESS: '55'  # CI runs single-worker on a clean VM; expect strong signal
         run: npm run e2e
 
       - name: Production build
