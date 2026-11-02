@@ -27,7 +27,8 @@ export const WORLD = {
   /** How many chunks around the player are loaded horizontally. 8 is the voxel-sandbox default (128 blocks). */
   RENDER_RADIUS_CHUNKS: 8,
   /** Vertical chunks loaded. 4 enough for L2 superflat; L3 raises for mountains. */
-  VERTICAL_RADIUS_CHUNKS: 4,
+  /** 2026-11-02 L4 re-tune (game-designer): 4→6 so peaks above SNOW_CAP_Y=72 don't pop in at MOUNTAIN_HEIGHT_MULT=2.4. +50% vertical streaming load — within L4 perf gate. */
+  VERTICAL_RADIUS_CHUNKS: 6,
 };
 
 export const DEBUG = {
@@ -45,8 +46,10 @@ export const DAY_NIGHT = {
   /** Fresh page load starts at this timeOfDay ∈ [0,1). 0.5 = noon per widget. */
   START_TIME_OF_DAY: 0.5,
   /** Ambient light floor + range. Light = AMBIENT_FLOOR + AMBIENT_RANGE * clamp(sunY). */
-  AMBIENT_FLOOR: 0.35,
-  AMBIENT_RANGE: 0.25,
+  /** 2026-11-02 L4 re-tune (game-designer): 0.35→0.18 so torches earn their screen time in caves at night (US-L4-08 ≥60/255 delta). */
+  AMBIENT_FLOOR: 0.18,
+  /** 2026-11-02 L4 re-tune: 0.25→0.42 so noon stays at 0.60 (0.18+0.42) while nights deepen. MUST move with AMBIENT_FLOOR or days go flat. */
+  AMBIENT_RANGE: 0.42,
   /** Sun direction curve shape — see src/render/dayNight.ts. */
   SUN_Y_FLOOR: 0.05,
   SUN_Z_TILT: 0.3,
@@ -76,7 +79,8 @@ export const PHYSICS = {
   /** Multiplier on MOVE_SPEED while in flight mode. */
   FLIGHT_SPEED_MULT: 2,
   /** New players spawn with flight on per widget — avoids first-touch fall. */
-  SPAWN_FLYING: true,
+  /** 2026-11-02 L4 re-tune (game-designer, see ADR-0018): true→false. L3 rationale ("avoid first-touch fall on empty superflat") no longer holds — L4 spawns on generated grass terrain. Walking in is the correct first impression; flight still F away. */
+  SPAWN_FLYING: false,
 };
 
 // =============================================================================
