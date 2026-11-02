@@ -1,0 +1,16 @@
+// Cloudflare Workers config for serving the Vite-built static site from dist/.
+// Works with the unified Workers+Pages dashboard wizard (the "Create an app"
+// flow that defaults to Workers). Also compatible with `wrangler deploy` from
+// the CLI if we ever enable the proxy for api.cloudflare.com.
+//
+// With this file in the repo + "Build command: npm run build" the dashboard
+// deploys dist/ as static assets. No Worker code needed.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chunksmith",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
