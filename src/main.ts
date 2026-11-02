@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { installDebugAPI } from "./debug/gameAPI";
 import { DEV_SEED } from "./debug/seeds";
-import { PLAYER, CAMERA, WORLD } from "../design/config";
+import { PLAYER, CAMERA, WORLD, PHYSICS, PERSISTENCE } from "../design/config";
 import { World } from "./world/World";
 import type { Chunk } from "./world/Chunk";
 import { terrainAt, surfaceHeightAt } from "./gen/terrain";
@@ -24,6 +24,10 @@ import { ChunkManager } from "./world/ChunkManager";
 import type { ChunkStreamUpdate } from "./world/ChunkManager";
 import { raycastVoxels } from "./player/raycast";
 import { hitToIntent } from "./player/applyBlockFromHit";
+import { stepPhysics } from "./player/physics";
+import type { PhysicsState } from "./player/physics";
+import { stepDayNight } from "./render/dayNight";
+import { ChunkPersistence } from "./world/storage";
 import { initHotbar } from "./ui/hotbar";
 import { getSelectedBlock } from "./ui/HotbarState";
 import type { PlayerId } from "./world/types";
@@ -118,8 +122,18 @@ function disposeChunk(chunk: Chunk): void {
   chunk.mesh = undefined;
 }
 
+// L3 persistence: debounced IDB chunk-delta saves. World ID is single-world "world-0"
+// per widget decision. markDirty on each successful block change, start the periodic
+// flush loop, flush on beforeunload so an abrupt tab-close still saves.
+const persistence = new ChunkPersistence(PERSISTENCE.WORLD_ID, PERSISTENCE.FLUSH_INTERVAL_MS);
+persistence.start();
+window.addEventListener("beforeunload", () => {
+  // Fire-and-forget — IDB transaction kicks off synchronously enough for most browsers.
+  void persistence.flush();
+});
+
 const chunkManager = new ChunkManager(
-  world, terrainAt, attachMesh, disposeChunk, radiusH, radiusV,
+  world, terrainAt, attachMesh, disposeChunk, radiusH, radiusV, persistence,
 );
 
 // Streaming stats: updated every call to chunkManager.update().
@@ -127,13 +141,34 @@ let lastStreamUpdate: ChunkStreamUpdate = { added: [], removed: [] };
 let totalStreamingMs = 0;
 let streamUpdateCount = 0;
 
-/** Prime the world: run one update at the spawn position so the player sees terrain. */
+/**
+ * Load every desired chunk through primeChunk (IDB-first, else procedural), then
+ * run the sync update() to attach meshes. Called at startup and on every chunk
+ * crossing — fire-and-forget while the game loop keeps running.
+ */
+let streamInFlight: Promise<void> | null = null;
+async function streamUpdateAsync(wx: number, wy: number, wz: number): Promise<void> {
+  const target = chunkManager.playerChunk(wx, wy, wz);
+  const primes: Promise<unknown>[] = [];
+  for (let cy = target.cy - radiusV; cy <= target.cy + radiusV; cy++) {
+    for (let cz = target.cz - radiusH; cz <= target.cz + radiusH; cz++) {
+      for (let cx = target.cx - radiusH; cx <= target.cx + radiusH; cx++) {
+        primes.push(chunkManager.primeChunk({ cx, cy, cz }));
+      }
+    }
+  }
+  await Promise.all(primes);
+  const t0 = performance.now();
+  lastStreamUpdate = chunkManager.update(wx, wy, wz);
+  totalStreamingMs += performance.now() - t0;
+  streamUpdateCount += 1;
+}
+
+/** Prime the world: load every initial chunk (IDB or procedural) before the game loop. */
 {
   const t0 = performance.now();
-  lastStreamUpdate = chunkManager.update(camera.position.x, camera.position.y, camera.position.z);
+  await streamUpdateAsync(camera.position.x, camera.position.y, camera.position.z);
   const dt = performance.now() - t0;
-  totalStreamingMs += dt;
-  streamUpdateCount += 1;
   // eslint-disable-next-line no-console
   console.log(
     `[chunksmith] initial stream: ${lastStreamUpdate.added.length} chunks loaded in ${dt.toFixed(1)}ms`,
@@ -192,11 +227,13 @@ function onMouseDown(e: MouseEvent): void {
     ? `⛏ broke @ (${hit.cell.x}, ${hit.cell.y}, ${hit.cell.z})`
     : `+ placed @ (${hit.cell.x + hit.normal.x}, ${hit.cell.y + hit.normal.y}, ${hit.cell.z + hit.normal.z})`);
 
-  // Remesh the edited chunk + boundary neighbors so the change is visible.
+  // Remesh the edited chunk + boundary neighbors so the change is visible, and
+  // mark the mutated chunk dirty for the next IDB flush.
   for (const key of result.dirtyChunks) {
     const [cx, cy, cz] = key.split(",").map(Number);
     const c = world.getChunk({ cx, cy, cz });
     if (!c) continue;
+    persistence.markDirty(c);
     attachMesh(c, {
       px: world.getChunk({ cx: cx + 1, cy, cz }),
       nx: world.getChunk({ cx: cx - 1, cy, cz }),
@@ -219,9 +256,37 @@ window.addEventListener("contextmenu", (e) => { if (controls.isLocked) e.prevent
 // may now be inside a hill at the new world shape.
 camera.lookAt(spawnX, surfaceHeightAt(DEV_SEED, spawnX, spawnZ - 8), spawnZ - 8);
 
+// === L3 physics state ===
+// camera.position is the player's EYE position; physicsState.position is FEET.
+// Keep them in lockstep: camera.y = physics.y + EYE_HEIGHT every frame.
+const EYE_HEIGHT = PLAYER.AABB_HEIGHT_BLOCKS * 0.9; // 1.62m — eyes near top of 1.8m AABB
+const physicsState: PhysicsState = {
+  position: { x: camera.position.x, y: camera.position.y - EYE_HEIGHT, z: camera.position.z },
+  velocity: { x: 0, y: 0, z: 0 },
+  grounded: false,
+  flying: PHYSICS.SPAWN_FLYING, // widget decision: spawn in flight mode
+};
+
+// Day/night: lock startSec at page load. 10-min cycle, starts at noon (0.5) per widget.
+const dayNightStartSec = performance.now() / 1000;
+
 // === Input ===
 const keys: Record<string, boolean> = {};
-window.addEventListener("keydown", (e) => { keys[e.code] = true;  });
+/** Edge-triggered jump: set true on fresh Space press, consumed by one physics tick. */
+let jumpQueued = false;
+window.addEventListener("keydown", (e) => {
+  keys[e.code] = true;
+  if (e.repeat) return;
+  // F toggles flight mode. Ground is checked on fall after disable, so re-enable safely.
+  if (e.code === PHYSICS.FLIGHT_TOGGLE_KEY) {
+    physicsState.flying = !physicsState.flying;
+    if (physicsState.flying) physicsState.velocity.y = 0;
+    flashToast(`✈ flight: ${physicsState.flying ? "on" : "off"}`);
+    return;
+  }
+  // Space jumps when NOT flying; when flying, Space is held for upward motion (handled in tick).
+  if (e.code === "Space" && !physicsState.flying) jumpQueued = true;
+});
 window.addEventListener("keyup",   (e) => { keys[e.code] = false; });
 
 // === Main loop ===
@@ -237,6 +302,9 @@ let lastChunkCoord = chunkManager.playerChunk(
   camera.position.x, camera.position.y, camera.position.z,
 );
 
+// Reused per-frame scratch vector so we don't allocate inside tick().
+const forwardScratch = new THREE.Vector3();
+
 function tick(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -244,21 +312,52 @@ function tick(now: number) {
   if (controls.isLocked) {
     const forward = (keys["KeyW"] ? 1 : 0) - (keys["KeyS"] ? 1 : 0);
     const right   = (keys["KeyD"] ? 1 : 0) - (keys["KeyA"] ? 1 : 0);
-    // L2 creative-flight: Space = up, Shift = down. Gravity + collision are L3.
-    const up      = (keys["Space"] ? 1 : 0) - (keys["ShiftLeft"] || keys["ShiftRight"] ? 1 : 0);
-    if (forward) controls.moveForward(forward * PLAYER.MOVE_SPEED_MPS * dt);
-    if (right)   controls.moveRight(right   * PLAYER.MOVE_SPEED_MPS * dt);
-    if (up)      camera.position.y += up * PLAYER.MOVE_SPEED_MPS * dt;
+    // Flying: Space=up / Shift=down for free vertical. Grounded: Space already queued as jump.
+    const up = physicsState.flying
+      ? (keys["Space"] ? 1 : 0) - (keys["ShiftLeft"] || keys["ShiftRight"] ? 1 : 0)
+      : 0;
+
+    // Build horizontal camera basis for stepPhysics (yaw only — pitch doesn't move the player).
+    camera.getWorldDirection(forwardScratch);
+    forwardScratch.y = 0;
+    const fvLen = Math.hypot(forwardScratch.x, forwardScratch.z);
+    const cameraForward = fvLen > 1e-6
+      ? { x: forwardScratch.x / fvLen, y: 0, z: forwardScratch.z / fvLen }
+      : { x: 0, y: 0, z: -1 };
+    // Right = forward rotated -90° around Y (y-up right-handed world).
+    const cameraRight = { x: -cameraForward.z, y: 0, z: cameraForward.x };
+
+    const next = stepPhysics({
+      state: physicsState,
+      input: { forward, right, up, jump: jumpQueued },
+      world,
+      cameraForward,
+      cameraRight,
+      dt,
+    });
+    jumpQueued = false; // one-shot per Space press
+    physicsState.position = next.position;
+    physicsState.velocity = next.velocity;
+    physicsState.grounded = next.grounded;
+    // Keep eye in lockstep with feet.
+    camera.position.set(next.position.x, next.position.y + EYE_HEIGHT, next.position.z);
   }
 
-  // Only re-stream when the player crossed into a new chunk.
+  // Day/night: update the shader uniforms + sky color every frame (cheap).
+  const dnState = stepDayNight(now / 1000, dayNightStartSec);
+  material.updateDayNight(dnState);
+  (scene.background as THREE.Color).setRGB(dnState.skyColor.r, dnState.skyColor.g, dnState.skyColor.b);
+
+  // Re-stream when the player crossed into a new chunk — async so IDB-saved deltas load.
+  // In-flight guard prevents overlapping updates during rapid crossings.
   const cc = chunkManager.playerChunk(camera.position.x, camera.position.y, camera.position.z);
-  if (cc.cx !== lastChunkCoord.cx || cc.cy !== lastChunkCoord.cy || cc.cz !== lastChunkCoord.cz) {
-    const t0 = performance.now();
-    lastStreamUpdate = chunkManager.update(camera.position.x, camera.position.y, camera.position.z);
-    totalStreamingMs += performance.now() - t0;
-    streamUpdateCount += 1;
+  if (
+    !streamInFlight &&
+    (cc.cx !== lastChunkCoord.cx || cc.cy !== lastChunkCoord.cy || cc.cz !== lastChunkCoord.cz)
+  ) {
     lastChunkCoord = cc;
+    streamInFlight = streamUpdateAsync(camera.position.x, camera.position.y, camera.position.z)
+      .finally(() => { streamInFlight = null; });
   }
 
   renderer.render(scene, camera);
@@ -336,6 +435,7 @@ installDebugAPI({
       const [cx, cy, cz] = key.split(",").map(Number);
       const c = world.getChunk({ cx, cy, cz });
       if (!c) continue;
+      persistence.markDirty(c);
       attachMesh(c, {
         px: world.getChunk({ cx: cx + 1, cy, cz }),
         nx: world.getChunk({ cx: cx - 1, cy, cz }),

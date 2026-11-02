@@ -40,7 +40,7 @@ export const DEBUG = {
 // === L3 ===
 
 export const DAY_NIGHT = {
-  /** Full cycle in seconds. 600 = 10 min = Minecraft default. Per widget. */
+  /** Full cycle in seconds. 600 = 10 min, voxel-sandbox genre default. Per widget. */
   PERIOD_SEC: 600,
   /** Fresh page load starts at this timeOfDay ∈ [0,1). 0.5 = noon per widget. */
   START_TIME_OF_DAY: 0.5,
@@ -63,7 +63,7 @@ export const PERSISTENCE = {
 };
 
 export const PHYSICS = {
-  /** Downward acceleration in m/s². 32 ≈ Minecraft-ish feel. */
+  /** Downward acceleration in m/s². 32 gives voxel-sandbox-feel jump arcs (apex ≈ 1.27 blocks with JUMP=9). */
   GRAVITY_MPS2: 32,
   /** Jump impulse. 9 m/s with gravity 32 → apex ≈ 1.27 m (just over 1 block). */
   JUMP_VELOCITY_MPS: 9,
