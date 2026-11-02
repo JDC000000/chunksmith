@@ -34,16 +34,19 @@ test("boots without errors and exposes debug API", async ({ page }) => {
       hasScene: !!g.scene,
       hasCamera: !!g.camera,
       hasRenderer: !!g.renderer,
-      hasCube: !!g.getCube?.(),
-      cubeColor: g.getCube()?.material?.color?.getHex?.(),
+      hasWorld: !!g.world,
+      loadedChunks: g.getLoadedChunkCount?.(),
+      triangles: g.getChunkTriangleCount?.(),
     };
   });
 
   expect(probe.hasScene).toBe(true);
   expect(probe.hasCamera).toBe(true);
   expect(probe.hasRenderer).toBe(true);
-  expect(probe.hasCube).toBe(true);
-  expect(probe.cubeColor).toBe(0x3b82f6);
+  expect(probe.hasWorld).toBe(true);
+  // Day 2: one chunk loaded with real voxel geometry
+  expect(probe.loadedChunks).toBe(1);
+  expect(probe.triangles).toBeGreaterThan(0);
 });
 
 test("pointer-lock overlay disappears on click", async ({ page }) => {

@@ -2,13 +2,13 @@
 // Rename with units in the identifier. Comment the WHY, not the WHAT.
 
 export const PLAYER = {
-  /** Walking speed. 5 feels brisk but not Olympic (Minecraft is ~4.3). Jon-tunable. */
+  /** Walking speed. 5 feels brisk but not Olympic (voxel-sandbox norm is ~4-5). Jon-tunable. */
   MOVE_SPEED_MPS: 5,
-  /** How far the player can reach to break/place a block. Matches Minecraft default. */
+  /** How far the player can reach to break/place a block. 6 is the voxel-sandbox default. */
   REACH_BLOCKS: 6,
   /** How tall the player AABB is. 1.8 = adult-ish; L3+ uses this for collision. */
   AABB_HEIGHT_BLOCKS: 1.8,
-  /** How wide the player AABB is. 0.6 is Minecraft-standard — fits through 1-wide corridors. */
+  /** How wide the player AABB is. 0.6 fits through 1-wide corridors (voxel-sandbox convention). */
   AABB_WIDTH_BLOCKS: 0.6,
 };
 
@@ -24,7 +24,7 @@ export const CAMERA = {
 export const WORLD = {
   /** Chunk size cube. ADR-0002 locks this in — do NOT change without ADR. */
   CHUNK_SIZE: 16,
-  /** How many chunks around the player are loaded horizontally. 8 = Minecraft-ish. */
+  /** How many chunks around the player are loaded horizontally. 8 is the voxel-sandbox default (128 blocks). */
   RENDER_RADIUS_CHUNKS: 8,
   /** Vertical chunks loaded. 4 enough for L2 superflat; L3 raises for mountains. */
   VERTICAL_RADIUS_CHUNKS: 4,
