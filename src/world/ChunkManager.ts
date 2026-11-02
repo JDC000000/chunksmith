@@ -14,6 +14,7 @@ import { BLOCKS } from "./blocks";
 import type { ChunkCoord, ChunkKey } from "./types";
 import { toChunkKey } from "./types";
 import type { ChunkNeighbors } from "../mesh/naiveMesher";
+import { loadChunk, type ChunkPersistence } from "./storage";
 
 /** Terrain generator contract. Same shape as src/gen/terrain.ts#terrainAt. */
 export type TerrainFn = (seed: string, cx: number, cy: number, cz: number) => Uint8Array;
@@ -40,7 +41,36 @@ export class ChunkManager {
     readonly disposer: ChunkDisposer,
     readonly radiusH: number,
     readonly radiusV: number,
+    /**
+     * Optional persistence source. When set, primeChunk() checks IDB first
+     * and uses the saved delta instead of calling terrainFn. update() stays
+     * synchronous — callers that want IDB-backed chunks must await primeChunk
+     * for each new coord BEFORE invoking update().
+     */
+    readonly persistence?: ChunkPersistence,
   ) {}
+
+  /**
+   * Load a chunk's voxels (from IDB delta if present, else procedural) and
+   * attach it to the World. Idempotent: a second call for the same coord
+   * returns immediately. Caller awaits this before `update()` so the sync
+   * streaming pass only sees fully-prepared Chunks.
+   */
+  async primeChunk(coord: ChunkCoord): Promise<Chunk> {
+    const existing = this.world.getChunk(coord);
+    if (existing) return existing;
+
+    let voxels: Uint8Array | undefined;
+    if (this.persistence) {
+      voxels = await loadChunk(this.persistence.worldId, coord);
+    }
+    if (!voxels) {
+      voxels = this.terrainFn(this.world.seed, coord.cx, coord.cy, coord.cz);
+    }
+    const chunk = new Chunk(coord, voxels);
+    this.world.setChunk(chunk);
+    return chunk;
+  }
 
   /** Chunk coord that owns the given world coord. Floors on each axis. */
   playerChunk(worldX: number, worldY: number, worldZ: number): ChunkCoord {

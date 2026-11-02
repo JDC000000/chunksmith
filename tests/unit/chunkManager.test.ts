@@ -16,6 +16,7 @@ import { BLOCKS } from "../../src/world/blocks";
 import { terrainAt } from "../../src/gen/terrain";
 import { ChunkManager } from "../../src/world/ChunkManager";
 import { toChunkKey } from "../../src/world/types";
+import { ChunkPersistence, saveChunk, clearWorld } from "../../src/world/storage";
 
 const SIZE = WORLD.CHUNK_SIZE;
 
@@ -113,9 +114,12 @@ describe("ChunkManager", () => {
       makeDisposer({ disposed: 0 }),
       0, 0,
     );
-    // Start at a sky chunk (cy=1 is all air in superflat): world y = 16+ picks cy=1.
-    cm.update(0, SIZE, 0);
-    const sky = w.getChunk({ cx: 0, cy: 1, cz: 0 });
+    // Pick a sky chunk safely above the procedural heightmap. Terrain tops out
+    // around world y ≈ 74, so cy=5 (world y 80..95) is reliably all air for the
+    // "seed" seed. (This test was superflat-era pinned to cy=1 — moved up when
+    // L3 terrain-generator replaced the flat plane.)
+    cm.update(0, SIZE * 5, 0);
+    const sky = w.getChunk({ cx: 0, cy: 5, cz: 0 });
     expect(sky).toBeDefined();
     expect(triCountFor(sky)).toBe(0);
   });
@@ -214,6 +218,73 @@ describe("ChunkManager", () => {
     // The far horizontal corners ARE loaded.
     expect(w.getChunk({ cx: 2, cy: 0, cz: 2 })).toBeDefined();
     expect(w.getChunk({ cx: -2, cy: 0, cz: -2 })).toBeDefined();
+  });
+
+  test("primeChunk falls back to terrainFn when IDB has no saved delta", async () => {
+    const worldId = `cm-no-delta-${Date.now()}`;
+    try {
+      const w = new World("seed");
+      let terrainCalls = 0;
+      const terrainFn = (seed: string, cx: number, cy: number, cz: number): Uint8Array => {
+        terrainCalls++;
+        // Return a distinctive byte so we can tell the terrain path ran.
+        const buf = new Uint8Array(SIZE * SIZE * SIZE);
+        buf.fill(99);
+        buf[0] = cx + cy + cz; // dummy to use args
+        if (seed === "") buf[1] = 1;
+        return buf;
+      };
+      const persistence = new ChunkPersistence(worldId);
+      const cm = new ChunkManager(
+        w, terrainFn,
+        makeMeshBuilder({ built: 0 }),
+        makeDisposer({ disposed: 0 }),
+        0, 0,
+        persistence,
+      );
+      await cm.primeChunk({ cx: 7, cy: 0, cz: 0 });
+      const chunk = w.getChunk({ cx: 7, cy: 0, cz: 0 });
+      expect(chunk).toBeDefined();
+      expect(chunk!.voxels[100]).toBe(99); // from terrainFn
+      expect(terrainCalls).toBe(1);
+    } finally {
+      await clearWorld(worldId);
+    }
+  });
+
+  test("primeChunk loads saved bytes from IDB when present, bypassing terrainFn", async () => {
+    const worldId = `cm-with-delta-${Date.now()}`;
+    try {
+      const w = new World("seed");
+
+      // Pre-seed IDB with a chunk whose voxels we recognize.
+      const edited = new Chunk({ cx: 3, cy: 0, cz: 0 });
+      edited.voxels.fill(BLOCKS.stone);
+      edited.voxels[0] = BLOCKS.grass;
+      await saveChunk(worldId, edited);
+
+      let terrainCalls = 0;
+      const terrainFn = (): Uint8Array => {
+        terrainCalls++;
+        return new Uint8Array(SIZE * SIZE * SIZE); // all-air
+      };
+      const persistence = new ChunkPersistence(worldId);
+      const cm = new ChunkManager(
+        w, terrainFn,
+        makeMeshBuilder({ built: 0 }),
+        makeDisposer({ disposed: 0 }),
+        0, 0,
+        persistence,
+      );
+      await cm.primeChunk({ cx: 3, cy: 0, cz: 0 });
+      const chunk = w.getChunk({ cx: 3, cy: 0, cz: 0 });
+      expect(chunk).toBeDefined();
+      expect(chunk!.voxels[0]).toBe(BLOCKS.grass);
+      expect(chunk!.voxels[100]).toBe(BLOCKS.stone);
+      expect(terrainCalls).toBe(0); // IDB hit short-circuited terrainFn
+    } finally {
+      await clearWorld(worldId);
+    }
   });
 
   test("removed chunks are disposed and dropped from the World", () => {

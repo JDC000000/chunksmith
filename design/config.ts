@@ -36,3 +36,45 @@ export const DEBUG = {
   /** Toggle chunk-border wireframe via ?debug=1 URL param. */
   SHOW_CHUNK_BORDERS_FLAG: "debug",
 };
+
+// === L3 ===
+
+export const DAY_NIGHT = {
+  /** Full cycle in seconds. 600 = 10 min = Minecraft default. Per widget. */
+  PERIOD_SEC: 600,
+  /** Fresh page load starts at this timeOfDay ∈ [0,1). 0.5 = noon per widget. */
+  START_TIME_OF_DAY: 0.5,
+  /** Ambient light floor + range. Light = AMBIENT_FLOOR + AMBIENT_RANGE * clamp(sunY). */
+  AMBIENT_FLOOR: 0.35,
+  AMBIENT_RANGE: 0.25,
+  /** Sun direction curve shape — see src/render/dayNight.ts. */
+  SUN_Y_FLOOR: 0.05,
+  SUN_Z_TILT: 0.3,
+  /** Sky color endpoints (0..1 lerped by dayness). */
+  DAY_SKY_RGB:   [0.53, 0.81, 0.92] as const,
+  NIGHT_SKY_RGB: [0.05, 0.07, 0.16] as const,
+};
+
+export const PERSISTENCE = {
+  /** Debounced IDB flush interval in requestIdleCallback. */
+  FLUSH_INTERVAL_MS: 5000,
+  /** Single world ID per widget decision. L4+ can add multi-world UI. */
+  WORLD_ID: "world-0",
+};
+
+export const PHYSICS = {
+  /** Downward acceleration in m/s². 32 ≈ Minecraft-ish feel. */
+  GRAVITY_MPS2: 32,
+  /** Jump impulse. 9 m/s with gravity 32 → apex ≈ 1.27 m (just over 1 block). */
+  JUMP_VELOCITY_MPS: 9,
+  /** Terminal velocity clamp on fall. */
+  TERMINAL_VELOCITY_MPS: 50,
+  /** Max step-up (blocks). 1 = standard voxel-sandbox. */
+  STEP_UP_BLOCKS: 1,
+  /** Flight toggle key default = 'KeyF'. Space/Shift always available for flight motion. */
+  FLIGHT_TOGGLE_KEY: "KeyF",
+  /** Multiplier on MOVE_SPEED while in flight mode. */
+  FLIGHT_SPEED_MULT: 2,
+  /** New players spawn with flight on per widget — avoids first-touch fall. */
+  SPAWN_FLYING: true,
+};
