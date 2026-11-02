@@ -1,11 +1,15 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Day 1 smoke test. Proves:
+ * Day 4 smoke test. Proves:
  *  - Page loads without console errors
  *  - Three.js scene boots (canvas is drawn)
  *  - Debug API (window.__game) is installed
- *  - Blue cube exists in the scene
+ *  - ChunkManager streamed a 3D box of chunks around the spawn point
+ *
+ * Uses ?radius=1,1 so the headless SwiftShader backend doesn't swamp on the
+ * default (8H, 4V = 2601 chunks) load box. The real streaming test is
+ * ChunkManager's unit coverage; this just confirms the main.ts wiring.
  */
 test("boots without errors and exposes debug API", async ({ page }) => {
   const errors: string[] = [];
@@ -14,7 +18,7 @@ test("boots without errors and exposes debug API", async ({ page }) => {
     if (msg.type() === "error") errors.push(msg.text());
   });
 
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/?radius=1,1", { waitUntil: "networkidle" });
 
   // Wait for game-ready event (dispatched by installDebugAPI).
   await page.waitForFunction(() => (window as any).__game !== undefined, undefined, { timeout: 5000 });
@@ -35,8 +39,11 @@ test("boots without errors and exposes debug API", async ({ page }) => {
       hasCamera: !!g.camera,
       hasRenderer: !!g.renderer,
       hasWorld: !!g.world,
+      hasChunkManager: !!g.chunkManager,
       loadedChunks: g.getLoadedChunkCount?.(),
       triangles: g.getChunkTriangleCount?.(),
+      totalTriangles: g.getTotalTriangleCount?.(),
+      streamStats: g.getStreamStats?.(),
     };
   });
 
@@ -44,9 +51,14 @@ test("boots without errors and exposes debug API", async ({ page }) => {
   expect(probe.hasCamera).toBe(true);
   expect(probe.hasRenderer).toBe(true);
   expect(probe.hasWorld).toBe(true);
-  // Day 2: one chunk loaded with real voxel geometry
-  expect(probe.loadedChunks).toBe(1);
+  expect(probe.hasChunkManager).toBe(true);
+  // Day 4: ?radius=1,1 → 3*3*3 = 27 chunks streamed in around spawn.
+  expect(probe.loadedChunks).toBe(27);
   expect(probe.triangles).toBeGreaterThan(0);
+  expect(probe.totalTriangles).toBe(probe.triangles);
+  expect(probe.streamStats.radiusH).toBe(1);
+  expect(probe.streamStats.radiusV).toBe(1);
+  expect(probe.streamStats.streamUpdateCount).toBeGreaterThanOrEqual(1);
 });
 
 test("pointer-lock overlay disappears on click", async ({ page }) => {

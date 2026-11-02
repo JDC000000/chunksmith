@@ -30,6 +30,15 @@ export class World {
     this.chunks.set(toChunkKey(chunk.coord), chunk);
   }
 
+  /** Evict a chunk by coord. Streaming (ChunkManager) uses this when a chunk
+   *  walks out of load range. Caller is responsible for disposing GPU resources
+   *  first — World stays decoupled from the renderer. Returns true if a chunk
+   *  was removed, false if the coord wasn't loaded.
+   */
+  deleteChunk(coord: ChunkCoord): boolean {
+    return this.chunks.delete(toChunkKey(coord));
+  }
+
   loadedChunkCount(): number {
     return this.chunks.size;
   }

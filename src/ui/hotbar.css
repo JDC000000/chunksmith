@@ -1,0 +1,65 @@
+/* Hotbar overlay. DOM only, never part of the three.js scene.
+   Tunables are custom properties so L5 touch sizing is a one-block override below.
+   Contrast (WCAG AA, checked in tests/e2e/hotbar.spec.ts): label is white @85% on a 60% black plate,
+   >= 4.5:1 over any backdrop from night through pure white. */
+
+#hotbar {
+  --slot-size: 48px;
+  --slot-gap: 8px;
+  --slot-font-size: 10px;
+  --slot-border: #2a2a2a;
+  --slot-border-hover: #5a5a5a;
+  --slot-border-selected: #f9a825;
+  --slot-border-selected-hover: #ffca28;
+
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  z-index: 20; /* above #overlay (10) and #stats (5) */
+  width: max-content;
+  margin: 0 auto; /* centres without a transform, so label text stays pixel-aligned */
+  display: flex;
+  gap: var(--slot-gap);
+  /* The strip itself is click-through so it never swallows fire-clicks meant for the canvas. */
+  pointer-events: none;
+}
+
+#hotbar .slot {
+  box-sizing: border-box;
+  width: var(--slot-size);
+  height: var(--slot-size);
+  padding: 0;
+  border: 2px solid var(--slot-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.85);
+  font: var(--slot-font-size) / 1 system-ui, sans-serif;
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto; /* only the slots themselves take the mouse */
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#hotbar .slot:hover { border-color: var(--slot-border-hover); }
+#hotbar .slot.selected { border-color: var(--slot-border-selected); }
+#hotbar .slot.selected:hover { border-color: var(--slot-border-selected-hover); }
+
+/* Two-tone ring (dark inside, white outside) so keyboard focus is visible on daylight and night. */
+#hotbar .slot:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #000;
+}
+
+/* L5-ready: finger-sized targets. */
+@media (pointer: coarse) {
+  #hotbar {
+    --slot-size: 64px;
+    --slot-gap: 12px;
+    --slot-font-size: 12px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+}
