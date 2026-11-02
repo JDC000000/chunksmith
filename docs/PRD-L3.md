@@ -3,7 +3,7 @@
 **Date:** 2026-11-02
 **Version:** 1.0
 **Status:** Approved for L3 build (decisions locked via widget 2026-11-02)
-**Companion:** `PRD.md` (L1+L2, unchanged), `TSD-L3.md`, `workplan-L3.md`
+**Companion:** `PRD.md` (L1+L2, unchanged), `TSD-L3.md`, `docs/levels/level-3.md`
 
 ## 1. Vision
 A world that feels alive: hills to climb, caves to find, your edits still there tomorrow, and the sun crossing the sky while you build.

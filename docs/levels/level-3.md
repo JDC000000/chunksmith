@@ -13,7 +13,7 @@ Convention per day: **subagents · goal condition · acceptance test · parallel
 ### Day L3-1 (today) — Planning + Day-2 kickoff
 - **Subagents:** `planner` (THIS doc + PRD-L3 + TSD-L3 + 4 ADRs)
 - **Goal condition:** 7 docs committed in `docs/`; `npx tsc --noEmit` still clean (no `.ts` touched)
-- **Acceptance:** `ls docs/PRD-L3.md docs/TSD-L3.md docs/workplan-L3.md docs/decisions/ADR-{0009,0010,0011,0012}-*.md` all return paths
+- **Acceptance:** `ls docs/PRD-L3.md docs/TSD-L3.md docs/levels/level-3.md docs/decisions/ADR-{0009,0010,0011,0012}-*.md` all return paths
 - **Mode:** serial (one agent)
 - **Jon time:** 10 min to review widget decisions + skim docs
 

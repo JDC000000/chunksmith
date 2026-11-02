@@ -142,7 +142,7 @@ Two subagents on disjoint scopes.
 
 ## Week 2 — Polish, playtest, ship (Days L4-8 → L4-12)
 
-Modeled on L3 Week 3-4 (see `workplan-L3.md` §Week 3-4). Days below are **lower-fidelity drafts** — exact composition depends on Week-1 outcomes.
+Modeled on L3 Week 3-4 (see `docs/levels/level-3.md` §Week 3-4). Days below are **lower-fidelity drafts** — exact composition depends on Week-1 outcomes.
 
 ### Day L4-8 — P1 fix sprint (from Week-1 playtest)
 - Subagents vary by what surfaced; `game-designer` tunes feel; `voxel-engine-dev` fixes bugs

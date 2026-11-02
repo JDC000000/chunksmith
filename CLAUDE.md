@@ -1,5 +1,5 @@
 # Chunksmith (Voxel Sandbox)
-Browser voxel sandbox. Vite + TypeScript + three.js. Current scope: `docs/levels/level-1.md` (through Day 3), then `docs/levels/level-2.md`.
+Browser voxel sandbox. Vite + TypeScript + three.js. L1 → L4 all have per-level docs at `docs/levels/level-N.md`. L1-L3 are shipped; L4 is drafted and awaiting Day L4-1 widget-lock. L5 is netcode and not yet drafted.
 
 ## Commands
 - `npm run dev`          dev server at http://localhost:5173
@@ -22,6 +22,7 @@ Browser voxel sandbox. Vite + TypeScript + three.js. Current scope: `docs/levels
 
 ## Legal rules (hard)
 - No Mojang IP: no "Minecraft", "MC", "Creeper", "Steve", "Enderman" in filenames, strings, or comments.
+- Enforcement: `./scripts/legal-check.sh` scans `src/ public/ design/ scripts/ tests/` and exits non-zero on any hit. Called from CI and from every PRD's ship-gate. `docs/` is intentionally excluded — PRDs may quote the rule itself.
 - Textures must come from `public/textures/` and be CC0 or self-made (procedural at L2). Reviewer flags violations.
 
 ## Example /goal condition shape

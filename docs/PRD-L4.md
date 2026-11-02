@@ -94,7 +94,7 @@ Crash · data loss (lost edits, lost inventory) · controls unresponsive · visu
 - 60 FPS p50 on 2020 MacBook over 10 min walk including biome boundary crossings and 10+ torch placements
 - Memory steady-state ≤ **500 MB** after 10 min (up from 400 MB — illumination byte doubles per-cell cost)
 - Playwright + Vitest suite green; `npx tsc --noEmit` clean
-- `grep -rni -E 'minecraft|\\bmc\\b|creeper|\\bsteve\\b|enderman' src/ public/ docs/` returns zero (reviewer gate)
+- `./scripts/legal-check.sh` exits 0 (scans `src/ public/ design/ scripts/ tests/` for Mojang-IP terms; see CLAUDE.md Legal rules)
 
 ### 4.3 L5 entry gate
 - ≥20 external testers × 30 min
