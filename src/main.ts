@@ -37,13 +37,13 @@ const overlay   = document.getElementById("overlay")!;
 const crosshair = document.getElementById("crosshair")!;
 const toast     = document.getElementById("toast")!;
 
-/** Playtest-friendly brief message near center, fades after 1.5s. */
+/** Playtest-friendly brief message near center, fades after `durationMs` (default 1.5s). */
 let toastTimer: number | undefined;
-function flashToast(msg: string): void {
+function flashToast(msg: string, durationMs: number = 1500): void {
   toast.textContent = msg;
   toast.classList.add("show");
   if (toastTimer) window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1500);
+  toastTimer = window.setTimeout(() => toast.classList.remove("show"), durationMs);
 }
 
 const scene = new THREE.Scene();
@@ -175,10 +175,56 @@ async function streamUpdateAsync(wx: number, wy: number, wz: number): Promise<vo
   );
 }
 
+/**
+ * L3 Week 2 polish — spawn re-validation.
+ * Scan the spawn column in the LOADED world (which may differ from the pure
+ * procedural terrain if the player saved deltas) and nudge the camera to a safe
+ * resting position above the actual surface. If the column is all-air, keep the
+ * procedural fallback. If it's all-solid (player sealed themselves in), raise
+ * them above the top of the loaded chunks.
+ */
+function revalidateSpawnHeight(wx: number, wz: number, fallbackY: number): number {
+  const SCAN_TOP = 128; // well above any L3 mountain cap
+  const SCAN_BOTTOM = -32;
+  for (let y = SCAN_TOP; y >= SCAN_BOTTOM; y--) {
+    const here = world.getBlock(wx, y, wz);
+    const above = world.getBlock(wx, y + 1, wz);
+    if (here !== 0 && above === 0) {
+      return y + 1; // feet rest on the first air-above-solid
+    }
+  }
+  // All-air (player dug the whole column out) or no surface found — use procedural.
+  return fallbackY;
+}
+{
+  const revalidatedFeetY = revalidateSpawnHeight(spawnX, spawnZ, spawnSurfaceY);
+  // Lift 5 blocks above surface so flight-off players don't start inside a block.
+  const safeEyeY = revalidatedFeetY + 5;
+  if (Math.abs(safeEyeY - camera.position.y) > 0.5) {
+    camera.position.y = safeEyeY;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[chunksmith] spawn re-validated: procedural=${spawnSurfaceY} → loaded=${revalidatedFeetY}`,
+    );
+  }
+}
+
+/**
+ * L3 Week 2 polish — first-boot controls hint. Shows once per session when the
+ * player first enters pointer-lock, so the hint lands when they're ready to look
+ * around (not before). Reusing the toast element keeps the DOM footprint zero.
+ */
+let hintShown = false;
+function showFirstBootHint(): void {
+  if (hintShown) return;
+  hintShown = true;
+  flashToast("F = flight · Space = jump · Click = break · Right-click = place", 5000);
+}
+
 // === First-person controls ===
 const controls = new PointerLockControls(camera, renderer.domElement);
 overlay.addEventListener("click", () => controls.lock());
-controls.addEventListener("lock",   () => { overlay.classList.add("hidden");  crosshair.classList.add("on"); });
+controls.addEventListener("lock",   () => { overlay.classList.add("hidden");  crosshair.classList.add("on"); showFirstBootHint(); });
 controls.addEventListener("unlock", () => { overlay.classList.remove("hidden"); crosshair.classList.remove("on"); });
 scene.add(controls.object);
 
