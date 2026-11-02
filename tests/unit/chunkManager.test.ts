@@ -287,6 +287,46 @@ describe("ChunkManager", () => {
     }
   });
 
+  test("pre-primed chunks that lack a mesh are meshed by update() (L3 persistence integration)", async () => {
+    // L3 integration bug: streamUpdateAsync pre-primes chunks via primeChunk() which
+    // populates world.getChunk(coord), then calls update() to attach meshes. Without
+    // the needs-meshing branch in update(), those pre-primed chunks are treated as
+    // "already current" and never passed to the mesh builder — 27 chunks loaded, 0
+    // triangles. This test fails before the fix in ChunkManager.update() that adds
+    // desired-but-unmeshed chunks to the remesh set.
+    const worldId = "cm-test-prime-remesh";
+    try {
+      await clearWorld(worldId);
+      const w = new World("seed");
+      const built = { built: 0 };
+      const disposed = { disposed: 0 };
+      const persistence = new ChunkPersistence(worldId, 5000);
+      const cm = new ChunkManager(
+        w, terrainAt, makeMeshBuilder(built), makeDisposer(disposed), 1, 1, persistence,
+      );
+      // Pre-prime every chunk in the 3x3x3 box around origin — mimics main.ts
+      // streamUpdateAsync flow. After this, world has 27 chunks but none have meshes.
+      for (let cy = -1; cy <= 1; cy++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          for (let cx = -1; cx <= 1; cx++) {
+            await cm.primeChunk({ cx, cy, cz });
+          }
+        }
+      }
+      expect(w.loadedChunkCount()).toBe(27);
+      // Any chunk picked at random should have no mesh yet.
+      expect(w.getChunk({ cx: 0, cy: 0, cz: 0 })?.mesh).toBeUndefined();
+      // Now run update(). Without the fix, `added` is empty and `built` stays 0.
+      const diff = cm.update(0, 0, 0);
+      expect(diff.added.length).toBe(0); // nothing new to load — all pre-primed
+      expect(built.built).toBeGreaterThan(0); // meshes MUST have been built
+      // Every solid chunk now has a mesh (air chunks keep the empty-mesh sentinel).
+      expect(w.getChunk({ cx: 0, cy: 0, cz: 0 })?.mesh).toBeDefined();
+    } finally {
+      await clearWorld(worldId);
+    }
+  });
+
   test("removed chunks are disposed and dropped from the World", () => {
     const w = new World("seed");
     const built = { built: 0 };

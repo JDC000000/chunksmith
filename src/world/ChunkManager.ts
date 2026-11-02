@@ -172,8 +172,19 @@ export class ChunkManager {
 
     // --- Remesh set: added chunks + any already-loaded chunk adjacent to an
     //     added or removed one (its exposed-face set just changed). ---
+    // Also: any DESIRED chunk whose voxels are loaded but mesh is not yet attached
+    // (e.g. pre-primed via primeChunk() for IDB-backed loads). This catches the
+    // "27 chunks loaded, 0 triangles" bug where primeChunk populates world but
+    // update() skips meshing because the key is already in `current`.
     const remesh = new Set<ChunkKey>();
     for (const key of added) remesh.add(key);
+    for (const coord of desiredCoords) {
+      const key = toChunkKey(coord);
+      if (current.has(key)) {
+        const existing = this.world.getChunk(coord);
+        if (existing && existing.mesh === undefined) remesh.add(key);
+      }
+    }
     const perturbed: ChunkCoord[] = [];
     for (const key of added) {
       const [cx, cy, cz] = key.split(",").map(Number);
