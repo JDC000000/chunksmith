@@ -30,6 +30,17 @@ import type { PlayerId } from "./world/types";
 
 const container = document.getElementById("app")!;
 const overlay   = document.getElementById("overlay")!;
+const crosshair = document.getElementById("crosshair")!;
+const toast     = document.getElementById("toast")!;
+
+/** Playtest-friendly brief message near center, fades after 1.5s. */
+let toastTimer: number | undefined;
+function flashToast(msg: string): void {
+  toast.textContent = msg;
+  toast.classList.add("show");
+  if (toastTimer) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1500);
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb); // sky
@@ -40,8 +51,11 @@ const camera = new THREE.PerspectiveCamera(
   CAMERA.NEAR,
   CAMERA.FAR
 );
-// Spawn above-and-behind the origin chunk so the terrain is immediately visible.
-camera.position.set(8, 20, 48);
+// Spawn above-and-behind the origin chunk, close enough that REACH_BLOCKS (6) can
+// touch the grass surface. 20 blocks up left the player outside reach (silent no-op
+// on click) during the first external playtest; (8, 4, 24) keeps the grass in frame
+// and inside the raycast budget.
+camera.position.set(8, 4, 24);
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -127,8 +141,8 @@ let streamUpdateCount = 0;
 // === First-person controls ===
 const controls = new PointerLockControls(camera, renderer.domElement);
 overlay.addEventListener("click", () => controls.lock());
-controls.addEventListener("lock",   () => overlay.classList.add("hidden"));
-controls.addEventListener("unlock", () => overlay.classList.remove("hidden"));
+controls.addEventListener("lock",   () => { overlay.classList.add("hidden");  crosshair.classList.add("on"); });
+controls.addEventListener("unlock", () => { overlay.classList.remove("hidden"); crosshair.classList.remove("on"); });
 scene.add(controls.object);
 
 // === Hotbar (Day 6) ===
@@ -154,16 +168,27 @@ function onMouseDown(e: MouseEvent): void {
   const dir = { x: forward.x, y: forward.y, z: forward.z };
 
   const hit = raycastVoxels(world, origin, dir, PLAYER.REACH_BLOCKS);
-  if (!hit) { lastBlockChangeStats.lastResult = "miss"; return; }
+  if (!hit) {
+    lastBlockChangeStats.lastResult = "miss";
+    flashToast(`${reason === "break" ? "⛏ break" : "+ place"}: out of reach (${PLAYER.REACH_BLOCKS} blocks)`);
+    return;
+  }
 
   const blockId = getSelectedBlock();
   const intent = hitToIntent(hit, reason, blockId, PLAYER_ID);
   const result = world.applyBlockChange(intent);
-  if (!result.ok) { lastBlockChangeStats.lastResult = result.reason; return; }
+  if (!result.ok) {
+    lastBlockChangeStats.lastResult = result.reason;
+    flashToast(`${reason === "break" ? "⛏ break" : "+ place"} refused: ${result.reason}`);
+    return;
+  }
 
   if (reason === "break") lastBlockChangeStats.broken += 1;
   else lastBlockChangeStats.placed += 1;
   lastBlockChangeStats.lastResult = "ok";
+  flashToast(reason === "break"
+    ? `⛏ broke @ (${hit.cell.x}, ${hit.cell.y}, ${hit.cell.z})`
+    : `+ placed @ (${hit.cell.x + hit.normal.x}, ${hit.cell.y + hit.normal.y}, ${hit.cell.z + hit.normal.z})`);
 
   // Remesh the edited chunk + boundary neighbors so the change is visible.
   for (const key of result.dirtyChunks) {
@@ -181,8 +206,11 @@ function onMouseDown(e: MouseEvent): void {
   }
 }
 renderer.domElement.addEventListener("mousedown", onMouseDown);
-// Suppress browser context menu so right-click reaches the mousedown handler.
+// Suppress browser context menu so right-click (Mac trackpad two-finger / Ctrl-click) reaches
+// mousedown. Listen on both canvas AND window — on Mac trackpad the contextmenu sometimes
+// fires on document before Chrome routes it to canvas during pointer-lock.
 renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+window.addEventListener("contextmenu", (e) => { if (controls.isLocked) e.preventDefault(); });
 
 // Camera look-at: start angled toward the origin chunk so the player sees something.
 camera.lookAt(8, 1, 8);
@@ -212,8 +240,11 @@ function tick(now: number) {
   if (controls.isLocked) {
     const forward = (keys["KeyW"] ? 1 : 0) - (keys["KeyS"] ? 1 : 0);
     const right   = (keys["KeyD"] ? 1 : 0) - (keys["KeyA"] ? 1 : 0);
+    // L2 creative-flight: Space = up, Shift = down. Gravity + collision are L3.
+    const up      = (keys["Space"] ? 1 : 0) - (keys["ShiftLeft"] || keys["ShiftRight"] ? 1 : 0);
     if (forward) controls.moveForward(forward * PLAYER.MOVE_SPEED_MPS * dt);
     if (right)   controls.moveRight(right   * PLAYER.MOVE_SPEED_MPS * dt);
+    if (up)      camera.position.y += up * PLAYER.MOVE_SPEED_MPS * dt;
   }
 
   // Only re-stream when the player crossed into a new chunk.

@@ -21,11 +21,29 @@
       #overlay h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
       #overlay p  { margin: 0; opacity: 0.75; font-size: 14px; }
       #stats { position: absolute; top: 8px; left: 8px; z-index: 5; }
+      /* Crosshair: tiny white dot centered. Only visible once pointer-lock engages. */
+      #crosshair {
+        position: fixed; left: 50%; top: 50%; width: 6px; height: 6px;
+        margin-left: -3px; margin-top: -3px; border-radius: 50%;
+        background: rgba(255,255,255,0.9); box-shadow: 0 0 2px rgba(0,0,0,0.7);
+        pointer-events: none; z-index: 4; display: none;
+      }
+      #crosshair.on { display: block; }
+      /* Toast for Day-7 playtest feedback — fades after 1.5s */
+      #toast {
+        position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%);
+        background: rgba(0,0,0,0.65); color: #fff; padding: 6px 12px;
+        border-radius: 4px; font-size: 12px; z-index: 6; opacity: 0;
+        transition: opacity 0.2s ease; pointer-events: none;
+      }
+      #toast.show { opacity: 1; }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="overlay"><div class="card"><h1>Chunksmith</h1><p>Click to play &middot; WASD to move &middot; Esc to release</p></div></div>
+    <div id="crosshair"></div>
+    <div id="toast"></div>
+    <div id="overlay"><div class="card"><h1>Chunksmith</h1><p>Click to play &middot; WASD = move &middot; Space/Shift = up/down &middot; L-click = break &middot; R-click = place &middot; Esc = release</p></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
