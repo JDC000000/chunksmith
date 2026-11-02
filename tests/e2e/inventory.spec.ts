@@ -599,6 +599,23 @@ test.describe("US-L4-11 drag and drop preserves counts", () => {
     expect((await inv(page)).selectedHotbarSlot).toBe(6);
   });
 
+  test("a drag that ends back on its own hotbar slot is a cancel, not a click: it must not select that slot", async ({ page }) => {
+    await boot(page);
+    await clearAll(page);
+    await setHotbar(page, 5, BLOCKS.stone, 5);
+    await openPanel(page);
+    await page.keyboard.press("Digit1");
+    const a = await centre(hb(page, 5));
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(a.x, a.y - 60, { steps: 4 }); // out past the threshold and over empty game view
+    await page.mouse.move(a.x, a.y, { steps: 4 }); // and back onto the SAME slot: the browser now sends it a click
+    await page.mouse.up();
+    const s = await inv(page);
+    expect(s.hotbar[5]).toEqual({ blockId: BLOCKS.stone, count: 5 });
+    expect(s.selectedHotbarSlot, "the click that follows a drag is swallowed").toBe(0);
+  });
+
   test("a right-click on a slot never opens the browser menu while the panel is open", async ({ page }) => {
     await boot(page);
     await clearAll(page);

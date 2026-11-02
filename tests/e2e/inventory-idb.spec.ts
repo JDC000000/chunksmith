@@ -142,8 +142,12 @@ test.describe("US-L4-12 inventory persists across reload", () => {
     expect(s.hotbar[4]).toEqual({ blockId: BLOCKS.dirt, count: 12 });
     await expect(hb(page, 4)).toHaveClass(/\bselected\b/);
     await expect(hb(page, 4).locator(".count")).toHaveText("12");
-    // And the place handler's view of it, via the L2 API.
-    expect(await page.evaluate(() => (window as any).__game.getSelectedBlock?.())).toBe(BLOCKS.dirt);
+    // And the place handler's view of it, through the same module main.ts imports getSelectedBlock from.
+    const placeable = await page.evaluate(async () => {
+      const path = "/src/ui/HotbarState.ts";
+      return (await import(/* @vite-ignore */ path)).getSelectedBlock() as number;
+    });
+    expect(placeable).toBe(BLOCKS.dirt);
   });
 
   test("a later change wins: the last save is what comes back", async ({ page }) => {

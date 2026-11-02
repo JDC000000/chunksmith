@@ -35,36 +35,45 @@ async function expectSelected(page: Page, idx: number): Promise<void> {
 }
 
 test.describe("US-L2-04 hotbar selection", () => {
-  test("hotbar is visible after boot with 3 labelled slots", async ({ page }) => {
+  test("hotbar is visible after boot with 9 slots; starter kit fills first 3", async ({ page }) => {
     await boot(page);
     await expect(page.locator("#hotbar")).toBeVisible();
-    await expect(slots(page)).toHaveCount(3);
-    // Labels come from the block registry (BLOCKS), in slot order.
-    await expect(slots(page)).toHaveText(["grass", "dirt", "stone"]);
+    await expect(slots(page)).toHaveCount(9);
+    // L4 starter kit: grass/dirt/stone x64 in slots 0-2; slots 3-8 empty.
+    // Slot textContent = block name + count badge (hidden when count=1 or empty).
+    const texts = await slots(page).allTextContents();
+    expect(texts[0]).toContain("grass");
+    expect(texts[0]).toContain("64");
+    expect(texts[1]).toContain("dirt");
+    expect(texts[1]).toContain("64");
+    expect(texts[2]).toContain("stone");
+    expect(texts[2]).toContain("64");
+    // Slots 3-8 render empty — no block name.
+    for (let i = 3; i < 9; i++) expect(texts[i]).toBe("");
   });
 
   test("initial state: slot 0 selected, others not", async ({ page }) => {
     await boot(page);
     await expect(slot(page, 0)).toHaveClass(/\bselected\b/);
-    await expect(slot(page, 1)).not.toHaveClass(/\bselected\b/);
-    await expect(slot(page, 2)).not.toHaveClass(/\bselected\b/);
+    for (let i = 1; i < 9; i++) {
+      await expect(slot(page, i)).not.toHaveClass(/\bselected\b/);
+    }
     await expectSelected(page, 0);
   });
 
-  test("Digit2, Digit3, Digit1 move the selection", async ({ page }) => {
+  test("Digit1-9 move the selection to the matching slot (L4 full 9-slot hotbar)", async ({ page }) => {
     await boot(page);
-    await page.keyboard.press("Digit2");
-    await expectSelected(page, 1);
-    await page.keyboard.press("Digit3");
-    await expectSelected(page, 2);
-    await page.keyboard.press("Digit1");
-    await expectSelected(page, 0);
+    for (let i = 1; i <= 9; i++) {
+      await page.keyboard.press(`Digit${i === 9 ? 9 : i}`);
+      // Digit1 -> slot 0, Digit2 -> slot 1, ..., Digit9 -> slot 8
+      await expectSelected(page, i - 1);
+    }
   });
 
-  test("keys with no slot (Digit4, Digit9, Digit0) leave the selection alone", async ({ page }) => {
+  test("Digit0 and Ctrl+Digit leave selection alone (reserved/no slot)", async ({ page }) => {
     await boot(page);
     await page.keyboard.press("Digit3");
-    for (const code of ["Digit4", "Digit9", "Digit0"]) await page.keyboard.press(code);
+    await page.keyboard.press("Digit0");
     await expectSelected(page, 2);
   });
 
@@ -82,19 +91,18 @@ test.describe("US-L2-04 hotbar selection", () => {
     await expectSelected(page, 1);
   });
 
-  test("mouse wheel cycles: down = next, up = previous, both wrap", async ({ page }) => {
+  test("mouse wheel cycles 9 slots: down = next, up = previous, both wrap", async ({ page }) => {
     await boot(page);
     await page.mouse.move(640, 300);
-    await page.mouse.wheel(0, 100);
-    await expectSelected(page, 1);
-    await page.mouse.wheel(0, 100);
-    await expectSelected(page, 2);
-    await page.mouse.wheel(0, 100); // wraps 2 -> 0
+    // Walk forward through all 9 slots, then wrap.
+    for (let i = 1; i < 9; i++) {
+      await page.mouse.wheel(0, 100);
+      await expectSelected(page, i);
+    }
+    await page.mouse.wheel(0, 100); // wraps 8 -> 0
     await expectSelected(page, 0);
-    await page.mouse.wheel(0, -100); // wraps 0 -> 2
-    await expectSelected(page, 2);
-    await page.mouse.wheel(0, -100);
-    await expectSelected(page, 1);
+    await page.mouse.wheel(0, -100); // wraps 0 -> 8
+    await expectSelected(page, 8);
   });
 
   test("selection is mirrored in HotbarState, the value Day 5 place/break reads", async ({ page }) => {
@@ -131,18 +139,18 @@ test.describe("US-L2-04 hotbar selection", () => {
       };
     });
     expect(probe.barPointerEvents).toBe("none");
-    expect(probe.slotPointerEvents).toEqual(["auto", "auto", "auto"]);
-    expect(probe.centreHits).toEqual(["0", "1", "2"]);
+    expect(probe.slotPointerEvents).toEqual(["auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto"]);
+    expect(probe.centreHits).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8"]);
     expect(probe.gapInsideHotbar, `gap hit ${probe.gapTarget}; fire-clicks there must reach the canvas`).toBe(false);
   });
 
-  test("hotbar sits bottom-centre, 8px above the bottom edge", async ({ page }) => {
+  test("hotbar sits bottom-centre, 8px above the bottom edge (9 slots x 48, 8 gaps x 8)", async ({ page }) => {
     await boot(page);
     const box = (await page.locator("#hotbar").boundingBox())!;
     const vp = page.viewportSize()!;
     expect(vp.height - (box.y + box.height)).toBeCloseTo(8, 0);
     expect(box.x + box.width / 2).toBeCloseTo(vp.width / 2, 0);
-    expect(box.width).toBeCloseTo(3 * 48 + 2 * 8, 0);
+    expect(box.width).toBeCloseTo(9 * 48 + 8 * 8, 0);
     expect(box.height).toBeCloseTo(48, 0);
   });
 });
@@ -150,9 +158,10 @@ test.describe("US-L2-04 hotbar selection", () => {
 test.describe("coarse pointer (L5-ready)", () => {
   test.use({ hasTouch: true, isMobile: true });
 
-  test("slots grow to 64x64 with a wider gap", async ({ page }) => {
+  test("slots grow to 64x64 with a wider gap (sampled across the 9-slot bar)", async ({ page }) => {
     await boot(page);
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), "emulation precondition").toBe(true);
+    // Sample the first 3 slots — the pattern repeats across all 9.
     const boxes = await Promise.all([0, 1, 2].map((i) => slot(page, i).boundingBox()));
     for (const b of boxes) {
       expect(b!.width).toBeCloseTo(64, 0);

@@ -117,16 +117,22 @@ void main() {
   float sunDot = max(0.0, dot(vNormal, normalize(uSunDir)));
   float sunTerm = uAmbient + sunDot * uSunIntensity;
 
-  // Voxel light composition — ADR-0017:
+  // Voxel light composition — ADR-0017.
   //   sky = vSkylight / 15
   //   blk = vBlockLight / 15
   //   flk = 1 + AMPLITUDE * (noise - 0.5) * 2   (centered flicker)
   //   light = max(sky, max(TORCH_BRIGHTNESS_MIN, blk) * flk)
+  // PERF: noise2 is 4 hash12 calls — expensive in a software rasterizer
+  // (SwiftShader headless). Branch on blk > 0 so cells with no block-light
+  // (the overwhelming majority outside torch-lit regions) skip the flicker.
   float sky = vSkylight / 15.0;
   float blk = vBlockLight / 15.0;
-  float flk = 1.0 + TORCH_FLICKER_AMPLITUDE *
-              (noise2(vWorldPos.xz * 0.5 + vec2(uTime * TORCH_FLICKER_HZ)) - 0.5) * 2.0;
-  float voxelLight = max(sky, max(TORCH_BRIGHTNESS_MIN * blk, blk) * flk);
+  float voxelLight = sky;
+  if (blk > 0.0) {
+    float flk = 1.0 + TORCH_FLICKER_AMPLITUDE *
+                (noise2(vWorldPos.xz * 0.5 + vec2(uTime * TORCH_FLICKER_HZ)) - 0.5) * 2.0;
+    voxelLight = max(sky, max(TORCH_BRIGHTNESS_MIN * blk, blk) * flk);
+  }
 
   // Compose multiplicatively against sunTerm so day/night still modulates
   // lit regions, but take max with voxelLight so a torch in a dark cave

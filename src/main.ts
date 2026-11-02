@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { installDebugAPI } from "./debug/gameAPI";
 import { DEV_SEED } from "./debug/seeds";
-import { PLAYER, CAMERA, WORLD, PHYSICS, PERSISTENCE } from "../design/config";
+import { PLAYER, CAMERA, WORLD, PHYSICS, PERSISTENCE, LIGHTING } from "../design/config";
 import { World } from "./world/World";
 import type { Chunk } from "./world/Chunk";
 import { terrainAt, surfaceHeightAt } from "./gen/terrain";
@@ -28,8 +28,12 @@ import { stepPhysics } from "./player/physics";
 import type { PhysicsState } from "./player/physics";
 import { stepDayNight } from "./render/dayNight";
 import { ChunkPersistence } from "./world/storage";
+import { LightingSystem, seedSkylightColumn } from "./world/lighting";
+import { BLOCKS } from "./world/blocks";
 import { initHotbar } from "./ui/hotbar";
 import { getSelectedBlock } from "./ui/HotbarState";
+import { getSelectedIndex, getSlot, setSlot, addToInventory } from "./ui/InventoryState";
+import { initBackpack, createInventoryDebugAPI } from "./ui/backpack";
 import type { PlayerId } from "./world/types";
 
 const container = document.getElementById("app")!;
@@ -136,6 +140,35 @@ const chunkManager = new ChunkManager(
   world, terrainAt, attachMesh, disposeChunk, radiusH, radiusV, persistence,
 );
 
+// L4 lighting: block-light + skylight propagation per ADR-0014.
+// Instance lives beside world; takes dirty cells, propagates per-frame under a budget.
+const lightingSystem = new LightingSystem(world);
+
+/**
+ * L4: seed skylight down every column of a freshly-loaded chunk.
+ *
+ * seedSkylightColumn sets sky=MAX synchronously for every air cell above the
+ * first opaque block; opaque + under-opaque cells stay at 0. This is fast and
+ * gives direct-sunlight columns the right value.
+ *
+ * We INTENTIONALLY do NOT queue markLightCell for every top cell here —
+ * doing so for 3757 chunks x 256 cells (962K dirty cells) tanks startup FPS
+ * past the L4 perf gate. The trade-off: overhangs that would be side-lit by
+ * horizontal sky-leak stay dark at L4. Players notice caves need torches,
+ * which is in fact what the L4 feel wants. If horizontal sky-leak becomes
+ * needed (snow-under-overhang look, say), gate it behind player proximity.
+ *
+ * Block-change propagation (markBlockChanged) still runs normally — placing
+ * or breaking blocks correctly triggers local re-propagation.
+ */
+function seedChunkSkylight(chunk: Chunk): void {
+  for (let lx = 0; lx < 16; lx++) {
+    for (let lz = 0; lz < 16; lz++) {
+      seedSkylightColumn(chunk, lx, lz);
+    }
+  }
+}
+
 // Streaming stats: updated every call to chunkManager.update().
 let lastStreamUpdate: ChunkStreamUpdate = { added: [], removed: [] };
 let totalStreamingMs = 0;
@@ -149,7 +182,7 @@ let streamUpdateCount = 0;
 let streamInFlight: Promise<void> | null = null;
 async function streamUpdateAsync(wx: number, wy: number, wz: number): Promise<void> {
   const target = chunkManager.playerChunk(wx, wy, wz);
-  const primes: Promise<unknown>[] = [];
+  const primes: Promise<Chunk>[] = [];
   for (let cy = target.cy - radiusV; cy <= target.cy + radiusV; cy++) {
     for (let cz = target.cz - radiusH; cz <= target.cz + radiusH; cz++) {
       for (let cx = target.cx - radiusH; cx <= target.cx + radiusH; cx++) {
@@ -157,7 +190,15 @@ async function streamUpdateAsync(wx: number, wy: number, wz: number): Promise<vo
       }
     }
   }
-  await Promise.all(primes);
+  const primedChunks = await Promise.all(primes);
+  // L4: seed skylight for each freshly primed chunk. The LightingSystem.step() loop
+  // consumes the queue over subsequent frames (DIRTY_QUEUE_BUDGET_PER_FRAME).
+  for (const chunk of primedChunks) {
+    if (chunk && !(chunk as unknown as { __skylightSeeded?: boolean }).__skylightSeeded) {
+      seedChunkSkylight(chunk);
+      (chunk as unknown as { __skylightSeeded?: boolean }).__skylightSeeded = true;
+    }
+  }
   const t0 = performance.now();
   lastStreamUpdate = chunkManager.update(wx, wy, wz);
   totalStreamingMs += performance.now() - t0;
@@ -258,6 +299,16 @@ function onMouseDown(e: MouseEvent): void {
   }
 
   const blockId = getSelectedBlock();
+  // L4 inventory integration — guard place against empty hotbar + record the broken block type.
+  // For break we remember the voxel at hit.cell BEFORE applyBlockChange runs so we can pick it up.
+  const brokenBlockId = reason === "break"
+    ? world.getBlock(hit.cell.x, hit.cell.y, hit.cell.z)
+    : BLOCKS.air;
+  if (reason === "place" && blockId === BLOCKS.air) {
+    lastBlockChangeStats.lastResult = "empty-slot";
+    flashToast("+ place: slot is empty");
+    return;
+  }
   const intent = hitToIntent(hit, reason, blockId, PLAYER_ID);
   const result = world.applyBlockChange(intent);
   if (!result.ok) {
@@ -266,12 +317,38 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
-  if (reason === "break") lastBlockChangeStats.broken += 1;
-  else lastBlockChangeStats.placed += 1;
+  if (reason === "break") {
+    lastBlockChangeStats.broken += 1;
+    // L4: pick up the broken block into the inventory (hotbar first, then backpack).
+    if (brokenBlockId !== BLOCKS.air) {
+      addToInventory(brokenBlockId, 1);
+    }
+  } else {
+    lastBlockChangeStats.placed += 1;
+    // L4: consume 1 from the selected hotbar slot. If count reaches 0, clear the slot.
+    const sel = { lane: "hotbar" as const, index: getSelectedIndex() };
+    const current = getSlot(sel);
+    if (current && current.count > 1) {
+      setSlot(sel, { blockId: current.blockId, count: current.count - 1 });
+    } else if (current) {
+      setSlot(sel, null);
+    }
+  }
   lastBlockChangeStats.lastResult = "ok";
   flashToast(reason === "break"
     ? `⛏ broke @ (${hit.cell.x}, ${hit.cell.y}, ${hit.cell.z})`
     : `+ placed @ (${hit.cell.x + hit.normal.x}, ${hit.cell.y + hit.normal.y}, ${hit.cell.z + hit.normal.z})`);
+
+  // L4: mark the mutated cell dirty in the lighting system so the dirty-queue
+  // BFS re-propagates torch light / de-light on next frame step.
+  const mcx = Math.floor(intent.pos.x / 16);
+  const mcy = Math.floor(intent.pos.y / 16);
+  const mcz = Math.floor(intent.pos.z / 16);
+  const mlx = ((intent.pos.x % 16) + 16) % 16;
+  const mly = ((intent.pos.y % 16) + 16) % 16;
+  const mlz = ((intent.pos.z % 16) + 16) % 16;
+  const mutatedChunk = world.getChunk({ cx: mcx, cy: mcy, cz: mcz });
+  if (mutatedChunk) lightingSystem.markBlockChanged(mutatedChunk, mlx, mly, mlz);
 
   // Remesh the edited chunk + boundary neighbors so the change is visible, and
   // mark the mutated chunk dirty for the next IDB flush.
@@ -315,6 +392,19 @@ const physicsState: PhysicsState = {
 
 // Day/night: lock startSec at page load. 10-min cycle, starts at noon (0.5) per widget.
 const dayNightStartSec = performance.now() / 1000;
+
+// === L4 inventory + backpack ===
+// initBackpack is async: it loads PlayerState from IDB, hydrates the inventory, mounts
+// the backpack panel + binds E to open/close. getPlayerExtras is called at save time so
+// position/flight state round-trip too.
+await initBackpack({
+  worldId: PERSISTENCE.WORLD_ID,
+  getPlayerExtras: () => ({
+    flying: physicsState.flying,
+    position: { ...physicsState.position },
+    yawPitch: { yaw: camera.rotation.y, pitch: camera.rotation.x },
+  }),
+});
 
 // === Input ===
 const keys: Record<string, boolean> = {};
@@ -394,6 +484,11 @@ function tick(now: number) {
   material.updateDayNight(dnState);
   (scene.background as THREE.Color).setRGB(dnState.skyColor.r, dnState.skyColor.g, dnState.skyColor.b);
 
+  // L4: step the lighting system up to the per-frame budget, then update the shader
+  // time uniform so torch flicker reads a fresh value.
+  lightingSystem.step(LIGHTING.DIRTY_QUEUE_BUDGET_PER_FRAME);
+  material.updateTime(now / 1000);
+
   // Re-stream when the player crossed into a new chunk — async so IDB-saved deltas load.
   // In-flight guard prevents overlapping updates during rapid crossings.
   const cc = chunkManager.playerChunk(camera.position.x, camera.position.y, camera.position.z);
@@ -443,6 +538,9 @@ function getTotalTriangleCount(): number {
 }
 
 // === Debug API for e2e ===
+// L4: inventory debug surface — openBackpack, closeBackpack, getInventory,
+// simulateInventoryChange, flushInventory — expose on window.__game alongside existing hooks.
+const inventoryDebug = createInventoryDebugAPI();
 installDebugAPI({
   scene, camera, controls, renderer,
   world,
@@ -460,6 +558,14 @@ installDebugAPI({
   }),
   getSelectedBlock,
   getBlockChangeStats: () => ({ ...lastBlockChangeStats }),
+  // L4 inventory debug — spread into window.__game for Playwright
+  openBackpack: inventoryDebug.openBackpack,
+  closeBackpack: inventoryDebug.closeBackpack,
+  getInventory: inventoryDebug.getInventory,
+  simulateInventoryChange: inventoryDebug.simulateInventoryChange,
+  flushInventory: inventoryDebug.flushInventory,
+  // Lighting debug — expose pendingCount for perf HUDs
+  getLightingPending: () => lightingSystem.pendingCount(),
   // Day 5: Playwright helper — place/break at a world coord without needing pointer-lock.
   // Shares the exact same code path as the mouse handler (raycast is bypassed; applyBlockChange
   // + remesh is identical). This is intentionally lean — e2e tests should still prefer
@@ -477,6 +583,11 @@ installDebugAPI({
     if (reason === "break") lastBlockChangeStats.broken += 1;
     else lastBlockChangeStats.placed += 1;
     lastBlockChangeStats.lastResult = "ok";
+    // L4 lighting mark (same path as the mouse handler).
+    const smcx = Math.floor(x / 16), smcy = Math.floor(y / 16), smcz = Math.floor(z / 16);
+    const smlx = ((x % 16) + 16) % 16, smly = ((y % 16) + 16) % 16, smlz = ((z % 16) + 16) % 16;
+    const sMut = world.getChunk({ cx: smcx, cy: smcy, cz: smcz });
+    if (sMut) lightingSystem.markBlockChanged(sMut, smlx, smly, smlz);
     for (const key of result.dirtyChunks) {
       const [cx, cy, cz] = key.split(",").map(Number);
       const c = world.getChunk({ cx, cy, cz });

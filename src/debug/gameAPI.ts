@@ -6,6 +6,7 @@ import type { PointerLockControls } from "three/examples/jsm/controls/PointerLoc
 import type { World } from "../world/World";
 import type { ChunkManager } from "../world/ChunkManager";
 import type { BlockId } from "../world/blocks";
+import type { PlayerState } from "../world/playerState";
 
 export interface StreamStats {
   radiusH: number;
@@ -44,6 +45,17 @@ export interface GameAPI {
   getBlockChangeStats: () => BlockChangeStats;
   /** Day 5: fire a synthetic place/break at the given world coord (bypasses raycast). */
   simulateBlockChange: (reason: "place" | "break", x: number, y: number, z: number) => string;
+  /** L4: open/close the backpack panel. */
+  openBackpack: () => void;
+  closeBackpack: () => void;
+  /** L4: deep copy of the current PlayerState (hotbar, backpack, selectedSlot, flying, position, yawPitch). */
+  getInventory: () => PlayerState;
+  /** L4: synthetic inventory mutation for Playwright. Both nulls = pickup-into-free-slot. */
+  simulateInventoryChange: (hotbarSlot: number | null, backpackSlot: number | null, blockId: number, count: number) => void;
+  /** L4: resolves when every inventory change so far has been handed to IDB. */
+  flushInventory: () => Promise<void>;
+  /** L4: lighting dirty-queue depth — for perf HUDs. */
+  getLightingPending: () => number;
   version: string;
 }
 
